@@ -171,7 +171,12 @@
                     <div class="w-25 stat">
                         <div class="p-4">
                             <small class="text-muted">Failed Jobs Past 24 Hours</small>
-                            <p class="h4 mt-2 mb-0">{{ formatNumber(stats.failedPastDay) }}</p>
+                            <p class="h4 mt-2 mb-0">
+                                {{ formatNumber(stats.failedPastDay) }}
+                                <small v-if="overview.lost_24h > 0">
+                                    <router-link class="text-danger" :to="{ name: 'completed-jobs', query: { status: 'lost' } }" title="Jobs whose outcome was never reported">({{ overview.lost_24h }} lost)</router-link>
+                                </small>
+                            </p>
                         </div>
                     </div>
 

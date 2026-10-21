@@ -38,7 +38,8 @@ it('serves the overview with per-queue counts and worker totals', function (): v
         ->assertJsonPath('queues.0.pending', 1)
         ->assertJsonPath('queues.0.delayed', 1)
         ->assertJsonPath('queues.0.paused', false)
-        ->assertJsonPath('workers.alive', 0);
+        ->assertJsonPath('workers.alive', 0)
+        ->assertJsonPath('lost_24h', 0);
 
     $this->getJson('/belvedere/api/overview?connection=unknown')->assertNotFound();
 });

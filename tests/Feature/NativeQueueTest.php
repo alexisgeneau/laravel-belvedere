@@ -6,6 +6,7 @@ use Belvedere\Queues\NativeQueue;
 use Belvedere\Queues\NativeState;
 use Belvedere\Tests\Fixtures\Jobs\SucceedingJob;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 it('counts pending, delayed, running and stuck jobs per queue', function (): void {
     SucceedingJob::dispatch();
@@ -65,6 +66,32 @@ it('deletes, reschedules, releases and purges native jobs', function (): void {
         ->and(DB::table('jobs')->where('id', $third)->value('reserved_at'))->toBeNull()
         ->and($native->purge('database', 'default'))->toBe(2)
         ->and(DB::table('jobs')->count())->toBe(0);
+});
+
+it('collects the uuids of a queue in chunks', function (): void {
+    $rows = [];
+
+    for ($i = 1; $i <= 1203; $i++) {
+        $rows[] = [
+            'queue' => $i % 2 === 0 ? 'default' : 'mail',
+            'payload' => sprintf('{"uuid":"%s","displayName":"Job"}', Str::uuid()),
+            'attempts' => 0,
+            'reserved_at' => $i % 100 === 0 ? time() : null,
+            'available_at' => time(),
+            'created_at' => time(),
+        ];
+    }
+
+    foreach (array_chunk($rows, 200) as $chunk) {
+        DB::table('jobs')->insert($chunk);
+    }
+
+    $native = app(NativeQueue::class);
+
+    expect($native->uuids('database', 'default'))->toHaveCount(601)
+        ->and($native->uuids('database', 'default', unreservedOnly: true))->toHaveCount(589)
+        ->and($native->uuids('database', 'mail'))->toHaveCount(602)
+        ->and($native->uuids('database', 'reports'))->toBe([]);
 });
 
 it('rejects inspection of connections that do not use the database driver', function (): void {

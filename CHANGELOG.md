@@ -7,6 +7,7 @@
 - Actions: retry, forget, flush, delete, run now, release, purge, pause, resume, cancel and retry batches.
 - Per-minute metrics by queue and by job class.
 - Worker heartbeats and dead worker detection.
+- `lost` status for the executions whose outcome never arrives (worker killed, job removed from the queue table), reconciled by `belvedere:check` and set on the spot by the delete, purge and forget-worker actions; own tab under Completed Jobs and counter on the dashboard.
 - Alerts for backlogs, failure rates and dead workers (mail, Slack).
 - JSON API and console commands.
 - Dashboard derived from Horizon's interface: overview, monitoring, metrics, batches, pending, running, completed and failed jobs, workers, light and dark schemes.

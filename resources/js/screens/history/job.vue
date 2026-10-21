@@ -143,7 +143,7 @@
 
         <div class="card overflow-hidden mt-4" v-if="ready && exception">
             <div class="card-header d-flex align-items-center justify-content-between">
-                <h2 class="h6 m-0">Exception</h2>
+                <h2 class="h6 m-0">{{ job.status === 'lost' ? 'Why the job was marked as lost' : 'Exception' }}</h2>
             </div>
 
             <stacktrace :trace="exception.split('\n')" />

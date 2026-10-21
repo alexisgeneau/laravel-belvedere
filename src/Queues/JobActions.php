@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Belvedere\Queues;
 
+use Belvedere\Collector\Reconciler;
 use Belvedere\Enums\ActionType;
 use Belvedere\Enums\JobStatus;
 use Belvedere\Models\Action;
@@ -22,6 +23,7 @@ final readonly class JobActions
         private Batches $batches,
         private QueuePauser $pauser,
         private QueueFactory $queues,
+        private Reconciler $reconciler,
     ) {}
 
     public function retry(string $failedJobId, ?string $actor = null): bool
@@ -83,9 +85,17 @@ final readonly class JobActions
 
     public function delete(string $connection, int $id, ?string $actor = null): bool
     {
+        $uuid = $this->native->find($connection, $id)?->uuid;
         $deleted = $this->native->delete($connection, $id);
 
         if ($deleted) {
+            if ($uuid !== null) {
+                $this->reconciler->markLost(
+                    Job::query()->forUuid($uuid)->where('status', JobStatus::Queued->value),
+                    'Deleted from the dashboard'.$this->by($actor).'.',
+                );
+            }
+
             $this->log(ActionType::Delete, "{$connection}:{$id}", $actor);
         }
 
@@ -116,7 +126,16 @@ final readonly class JobActions
 
     public function purge(string $connection, string $queue, ?string $actor = null): int
     {
+        $uuids = array_keys($this->native->uuids($connection, $queue, unreservedOnly: true));
         $purged = $this->native->purge($connection, $queue);
+
+        foreach (array_chunk($uuids, 500) as $chunk) {
+            $this->reconciler->markLost(
+                Job::query()->where('connection', $connection)->where('status', JobStatus::Queued->value)->whereIn('uuid', $chunk),
+                "Purged with queue [{$queue}] from the dashboard".$this->by($actor).'.',
+            );
+        }
+
         $this->log(ActionType::Purge, "{$connection}:{$queue}", $actor);
 
         return $purged;
@@ -167,10 +186,20 @@ final readonly class JobActions
         $deleted = Worker::query()->whereKey($workerId)->delete() > 0;
 
         if ($deleted) {
+            $this->reconciler->markLost(
+                Job::query()->where('status', JobStatus::Running->value)->where('worker_id', $workerId),
+                "Worker [{$workerId}] was forgotten from the dashboard".$this->by($actor).' before reporting the outcome of this job.',
+            );
+
             $this->log(ActionType::ForgetWorker, $workerId, $actor);
         }
 
         return $deleted;
+    }
+
+    private function by(?string $actor): string
+    {
+        return $actor !== null ? " by {$actor}" : '';
     }
 
     private function recordQueuedAttempt(Payload $payload, FailedJob $failed): void

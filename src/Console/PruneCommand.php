@@ -25,7 +25,7 @@ final class PruneCommand extends Command
         $override = $this->option('hours') !== null ? max(1, (int) $this->option('hours')) : null;
         $hours = fn (string $key, int $default): int => $override ?? (int) $config->get("belvedere.retention.{$key}", $default);
 
-        $completed = [JobStatus::Completed->value, JobStatus::Released->value, JobStatus::TimedOut->value];
+        $completed = [JobStatus::Completed->value, JobStatus::Released->value, JobStatus::TimedOut->value, JobStatus::Lost->value];
 
         $deleted = [
             'completed jobs' => $this->pruneJobs(

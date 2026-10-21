@@ -47,7 +47,7 @@ Schedule::command('belvedere:check')->everyMinute();
 
 ## Dashboard
 
-The interface is a fork of Horizon's, with the same layout and the same screens so nobody has to relearn anything: Dashboard (throughput, backlog, workers, per-queue workload with pause, resume and purge), Monitoring (tags), Metrics (throughput, runtime and wait time charts by job or by queue over 1 hour, 24 hours or 7 days), Batches, Pending Jobs (pending and delayed), Running Jobs (running and stuck), Completed Jobs (with released and timed-out attempts), Failed Jobs (search, retry, retry all, flush) and Workers.
+The interface is a fork of Horizon's, with the same layout and the same screens so nobody has to relearn anything: Dashboard (throughput, backlog, workers, per-queue workload with pause, resume and purge), Monitoring (tags), Metrics (throughput, runtime and wait time charts by job or by queue over 1 hour, 24 hours or 7 days), Batches, Pending Jobs (pending and delayed), Running Jobs (running and stuck), Completed Jobs (with released, timed-out and lost attempts), Failed Jobs (search, retry, retry all, flush) and Workers.
 
 Every list refreshes itself (`refresh_seconds`), follows the system color scheme with a light/dark toggle, and can switch between observed connections. With `read_only` enabled, every action disappears from the interface and the API rejects it.
 
@@ -65,6 +65,10 @@ Tags follow Horizon's convention: a `tags()` method on the job, otherwise the El
 
 Cost per job: one `INSERT` when the job is queued (plus one for its tags), one `UPDATE` when it starts and one when it finishes. Metrics are accumulated in memory by each worker and flushed at most every 5 seconds, so a worker killed with `SIGKILL` loses at most a few seconds of them. Use `sampling`, disable snapshots or point `storage.connection` to a dedicated database to lower the cost further.
 
+### Lost executions
+
+An execution whose outcome never arrives is marked **lost** instead of staying "running" or "queued" forever. `belvedere:check` does it every minute: a running execution is lost once its worker is reported dead or stopped, once a later attempt of the same job exists, or once it is older than the connection's `retry_after` (the queue has released the job by then); a queued execution is lost once its job has left the `jobs` table without being processed, which only happens when the queue is cleared or the job deleted outside the dashboard. Deleting or purging jobs and forgetting a worker from the dashboard mark the matching executions on the spot. The reason is stored where the exception would be, lost executions have their own tab under Completed Jobs and a counter on the dashboard, and they follow the `completed` retention. A worker that reports late overrides the verdict, and a queued execution is revived if its job runs after all.
+
 ## Configuration
 
 `config/belvedere.php`:
@@ -80,7 +84,7 @@ Cost per job: one `INSERT` when the job is queued (plus one for its tags), one `
 | `storage.prefix` | `belvedere_` | Table prefix |
 | `sampling` | `1` | Record one job out of *n* (metrics stay exact for sampled jobs only) |
 | `snapshot.*` | enabled, 16 KB, common secret keys | Snapshot of the job's public properties |
-| `retention.*` | 7 days completed, 30 days failed | Retention applied by `belvedere:prune` |
+| `retention.*` | 7 days completed (released, timed-out and lost included), 30 days failed | Retention applied by `belvedere:prune` |
 | `workers.dead_after_seconds` | `90` | A worker without heartbeat for this long is reported dead |
 | `alerts.*` | mail / Slack routes, thresholds, cooldown | Alerts evaluated by `belvedere:check` |
 
@@ -102,7 +106,7 @@ A retry pushes the stored payload back with its attempts reset, exactly like `qu
 | --- | --- |
 | `belvedere:install` | Publish the configuration and the migration |
 | `belvedere:status` | Print every queue and the worker count in the console |
-| `belvedere:check` | Evaluate backlogs, failure rates and dead workers and send alerts |
+| `belvedere:check` | Mark lost executions, then evaluate backlogs, failure rates and dead workers and send alerts |
 | `belvedere:prune` | Apply the retention periods |
 | `belvedere:clear` | Delete everything Belvedere stored |
 

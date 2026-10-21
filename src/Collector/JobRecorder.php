@@ -10,6 +10,7 @@ use Belvedere\Models\JobTag;
 use Belvedere\Support\Payload;
 use Belvedere\Support\WorkerIdentity;
 use Illuminate\Contracts\Queue\Job as QueuedJob;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Queue\Events\JobQueued;
 use Illuminate\Support\Carbon;
@@ -140,7 +141,8 @@ final class JobRecorder
         $query = Job::query()->forUuid($uuid)->orderByDesc('attempt')->limit(1);
 
         if ($running !== null || $status === JobStatus::TimedOut) {
-            $query->where('status', JobStatus::Running->value);
+            // This worker ran the attempt: its outcome wins over a "lost" verdict of the reconciler.
+            $query->whereIn('status', [JobStatus::Running->value, JobStatus::Lost->value]);
         }
 
         $updated = $query->update([
@@ -171,12 +173,21 @@ final class JobRecorder
 
     private function startQueuedAttempt(string $uuid, Carbon $now, int $waitMs): bool
     {
-        return Job::query()->forUuid($uuid)->where('status', JobStatus::Queued->value)->update([
-            'status' => JobStatus::Running->value,
-            'started_at' => $now->format(Job::DATE_FORMAT),
-            'worker_id' => WorkerIdentity::id(),
-            'wait_ms' => $waitMs,
-        ]) > 0;
+        return Job::query()
+            ->forUuid($uuid)
+            ->where(function (Builder $query): void {
+                // A queued execution the reconciler gave up on is revived when the job runs after all.
+                $query->where('status', JobStatus::Queued->value)
+                    ->orWhere(fn (Builder $query): Builder => $query->where('status', JobStatus::Lost->value)->whereNull('started_at'));
+            })
+            ->update([
+                'status' => JobStatus::Running->value,
+                'started_at' => $now->format(Job::DATE_FORMAT),
+                'finished_at' => null,
+                'worker_id' => WorkerIdentity::id(),
+                'wait_ms' => $waitMs,
+                'exception' => null,
+            ]) > 0;
     }
 
     private function startNextAttempt(string $connection, QueuedJob $job, Payload $payload, Carbon $now): ?int
@@ -184,14 +195,16 @@ final class JobRecorder
         $uuid = (string) $job->uuid();
         $latest = Job::query()->forUuid($uuid)->orderByDesc('attempt')->first();
 
-        if ($latest !== null && $latest->status === JobStatus::Queued) {
+        if ($latest !== null && ($latest->status === JobStatus::Queued || ($latest->status === JobStatus::Lost && $latest->started_at === null))) {
             $waitMs = $latest->queued_at !== null ? $this->millisecondsBetween($latest->queued_at, $now) : null;
 
             $latest->forceFill([
                 'status' => JobStatus::Running,
                 'started_at' => $now,
+                'finished_at' => null,
                 'worker_id' => WorkerIdentity::id(),
                 'wait_ms' => $waitMs,
+                'exception' => null,
             ])->save();
 
             return $waitMs;

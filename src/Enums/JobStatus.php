@@ -13,6 +13,9 @@ enum JobStatus: string
     case Failed = 'failed';
     case TimedOut = 'timed_out';
 
+    /** The outcome was never reported: the worker died, or the job left the queue table without being processed. */
+    case Lost = 'lost';
+
     public function isFinal(): bool
     {
         return match ($this) {

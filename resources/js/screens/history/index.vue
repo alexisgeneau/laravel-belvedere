@@ -5,14 +5,17 @@
         { value: 'completed', label: 'Completed', empty: "There aren't any completed jobs." },
         { value: 'released', label: 'Released', empty: "There aren't any released jobs." },
         { value: 'timed_out', label: 'Timed Out', empty: "There aren't any timed out jobs." },
+        { value: 'lost', label: 'Lost', empty: "There aren't any lost jobs: every worker reported the outcome of its jobs." },
     ];
 
     export default {
         mixins: [listing],
 
         data() {
+            const requested = this.$route.query.status;
+
             return {
-                status: 'completed',
+                status: STATUSES.some((status) => status.value === requested) ? requested : 'completed',
                 search: '',
                 searchTimeout: null,
             };
@@ -30,6 +33,7 @@
 
         watch: {
             status() {
+                this.$router.replace({ query: { ...this.$route.query, status: this.status === 'completed' ? undefined : this.status } });
                 this.reset();
             },
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Belvedere\Queues;
 
+use Belvedere\Support\Payload;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Queue\Factory as QueueFactory;
 use Illuminate\Database\DatabaseManager;
@@ -14,6 +15,11 @@ use InvalidArgumentException;
 
 final readonly class NativeQueue
 {
+    private const CHUNK = 1000;
+
+    /** Bytes of payload read to find the uuid Laravel writes first. */
+    private const PAYLOAD_HEAD = 512;
+
     public function __construct(
         private DatabaseManager $db,
         private Repository $config,
@@ -158,6 +164,57 @@ final readonly class NativeQueue
         $this->assertSupported($connection);
 
         return $this->table($connection)->where('queue', $queue)->whereNull('reserved_at')->delete();
+    }
+
+    /**
+     * The uuids of the jobs stored for a queue, as a set.
+     *
+     * Laravel writes the uuid at the start of every payload, so only the head
+     * of each payload is read; the rare payloads built differently are read whole.
+     *
+     * @return array<string, true>
+     */
+    public function uuids(string $connection, string $queue, bool $unreservedOnly = false): array
+    {
+        $this->assertSupported($connection);
+
+        $uuids = [];
+        $lastId = 0;
+
+        do {
+            $rows = $this->table($connection)
+                ->selectRaw('id, substr(payload, 1, '.self::PAYLOAD_HEAD.') as payload_head')
+                ->where('queue', $queue)
+                ->when($unreservedOnly, fn (Builder $query): Builder => $query->whereNull('reserved_at'))
+                ->where('id', '>', $lastId)
+                ->orderBy('id')
+                ->limit(self::CHUNK)
+                ->get();
+
+            $unparsed = [];
+
+            foreach ($rows as $row) {
+                $lastId = (int) $row->id;
+
+                if (preg_match('/"uuid"\s*:\s*"([^"]{1,64})"/', (string) $row->payload_head, $matches) === 1) {
+                    $uuids[$matches[1]] = true;
+                } else {
+                    $unparsed[] = $lastId;
+                }
+            }
+
+            if ($unparsed !== []) {
+                foreach ($this->table($connection)->whereIn('id', $unparsed)->pluck('payload') as $payload) {
+                    $uuid = Payload::tryFromJson((string) $payload)?->uuid();
+
+                    if ($uuid !== null) {
+                        $uuids[$uuid] = true;
+                    }
+                }
+            }
+        } while ($rows->count() === self::CHUNK);
+
+        return $uuids;
     }
 
     public function defaultQueue(string $connection): string

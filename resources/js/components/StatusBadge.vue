@@ -10,6 +10,7 @@
         paused: 'badge-warning',
         failed: 'badge-danger',
         timed_out: 'badge-danger',
+        lost: 'badge-danger',
         dead: 'badge-danger',
         stopped: 'badge-secondary',
     };

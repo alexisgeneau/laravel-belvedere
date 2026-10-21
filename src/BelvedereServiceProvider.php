@@ -9,6 +9,7 @@ use Belvedere\Collector\JobRecorder;
 use Belvedere\Collector\MetricsAggregator;
 use Belvedere\Collector\PayloadMetadata;
 use Belvedere\Collector\QueueEventSubscriber;
+use Belvedere\Collector\Reconciler;
 use Belvedere\Collector\Sampler;
 use Belvedere\Collector\WorkerHeartbeat;
 use Belvedere\Console\CheckCommand;
@@ -124,6 +125,7 @@ final class BelvedereServiceProvider extends PackageServiceProvider
         });
 
         $this->app->singleton(NativeQueue::class);
+        $this->app->singleton(Reconciler::class);
         $this->app->singleton(QueueEventSubscriber::class);
     }
 

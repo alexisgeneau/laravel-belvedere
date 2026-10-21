@@ -4,11 +4,17 @@ declare(strict_types=1);
 
 namespace Workbench\Database\Seeders;
 
+use Belvedere\Enums\JobStatus;
+use Belvedere\Enums\WorkerStatus;
+use Belvedere\Models\Job;
+use Belvedere\Models\JobTag;
 use Belvedere\Models\MonitoredTag;
+use Belvedere\Models\Worker;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Str;
 use Workbench\App\Jobs\GenerateReport;
 use Workbench\App\Jobs\ProcessPayment;
 use Workbench\App\Jobs\RenderThumbnail;
@@ -50,5 +56,40 @@ final class DatabaseSeeder extends Seeder
 
         SyncCatalog::dispatch('ftp://supplier.example.com/catalog.csv')->delay(Carbon::now()->addMinutes(30));
         SendInvoice::dispatch(1099, 'late@example.com')->delay(Carbon::now()->addHours(2));
+
+        $this->deadWorker();
+
+        Artisan::call('belvedere:check');
+    }
+
+    /** A worker killed six minutes ago, with two jobs in flight and one job that left the queue table. */
+    private function deadWorker(): void
+    {
+        $now = Carbon::now();
+
+        Worker::query()->updateOrCreate(['id' => 'web-03:9112'], [
+            'hostname' => 'web-03', 'pid' => 9112, 'connection' => 'database', 'queues' => 'default,media',
+            'status' => WorkerStatus::Running, 'jobs_processed' => 418, 'memory_kb' => 52_100,
+            'started_at' => $now->copy()->subHours(3), 'last_seen_at' => $now->copy()->subMinutes(6),
+        ]);
+
+        $executions = [
+            [SendInvoice::class, 'default', $now->copy()->subMinutes(7), $now->copy()->subMinutes(6)->subSeconds(40), ['invoiceId' => 1077, 'email' => 'customer77@example.com'], ['billing', 'invoice:1077']],
+            [RenderThumbnail::class, 'media', $now->copy()->subMinutes(6)->subSeconds(10), $now->copy()->subMinutes(6)->subSeconds(5), ['mediaId' => 512], ['media:512']],
+            [SyncCatalog::class, 'default', $now->copy()->subMinutes(10), null, ['source' => 'ftp://supplier.example.com/catalog.csv'], ['catalog']],
+        ];
+
+        foreach ($executions as [$name, $queue, $queuedAt, $startedAt, $snapshot, $tags]) {
+            $job = Job::query()->create([
+                'uuid' => (string) Str::uuid(), 'attempt' => 1, 'connection' => 'database', 'queue' => $queue, 'name' => $name,
+                'status' => $startedAt !== null ? JobStatus::Running : JobStatus::Queued,
+                'tags' => $tags, 'snapshot' => $snapshot,
+                'worker_id' => $startedAt !== null ? 'web-03:9112' : null,
+                'queued_at' => $queuedAt, 'started_at' => $startedAt,
+                'wait_ms' => $startedAt !== null ? (int) $queuedAt->diffInMilliseconds($startedAt) : null,
+            ]);
+
+            JobTag::query()->insert(array_map(static fn (string $tag): array => ['job_id' => $job->id, 'tag' => $tag], $tags));
+        }
     }
 }

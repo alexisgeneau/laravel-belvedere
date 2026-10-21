@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace Belvedere\Http\Controllers;
 
+use Belvedere\Enums\JobStatus;
+use Belvedere\Enums\WorkerStatus;
 use Belvedere\Metrics\MetricsReader;
+use Belvedere\Models\Job;
 use Belvedere\Models\Worker;
 use Belvedere\Queues\NativeQueue;
 use Belvedere\Queues\QueueCounts;
@@ -40,15 +43,22 @@ final class OverviewController extends Controller
 
         $workers = Worker::query()->where('connection', $connection)->get();
 
+        $lost = Job::query()
+            ->where('status', JobStatus::Lost->value)
+            ->where('finished_at', '>=', Carbon::now()->subDay())
+            ->where('connection', $connection)
+            ->count();
+
         return new JsonResponse([
             'connection' => $connection,
             'connections' => $native->connections(),
             'supports_database_inspection' => $native->supports($connection),
             'queues' => $queues,
             'workers' => [
-                'alive' => $workers->filter(static fn (Worker $worker): bool => ! $worker->isDead($deadAfter))->count(),
+                'alive' => $workers->filter(static fn (Worker $worker): bool => in_array($worker->effectiveStatus($deadAfter), [WorkerStatus::Running, WorkerStatus::Paused], true))->count(),
                 'dead' => $workers->filter(static fn (Worker $worker): bool => $worker->isDead($deadAfter))->count(),
             ],
+            'lost_24h' => $lost,
             'generated_at' => Carbon::now()->toIso8601String(),
         ]);
     }
