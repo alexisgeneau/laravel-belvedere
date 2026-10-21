@@ -31,7 +31,7 @@ it('records a queued job with its tags and snapshot', function (): void {
         ->and($job->queue)->toBe('default')
         ->and($job->name)->toBe(SucceedingJob::class)
         ->and($job->tags)->toBe([Product::class.':'.$product->id])
-        ->and($job->snapshot)->toBe(['label' => 'hello', 'product' => Product::class.':'.$product->id])
+        ->and($job->snapshot)->toEqual(['label' => 'hello', 'product' => Product::class.':'.$product->id])
         ->and($job->queued_at)->not->toBeNull()
         ->and(JobTag::query()->where('job_id', $job->id)->pluck('tag')->all())->toBe([Product::class.':'.$product->id]);
 });
@@ -92,7 +92,8 @@ it('keeps the failed status when a job fails itself during its run', function ()
 it('redacts secrets in snapshots', function (): void {
     SecretJob::dispatch();
 
-    expect(Job::query()->sole()->snapshot)->toBe([
+    // toEqual rather than toBe: MySQL normalises JSON objects and reorders their keys.
+    expect(Job::query()->sole()->snapshot)->toEqual([
         'password' => Redactor::PLACEHOLDER,
         'apiToken' => Redactor::PLACEHOLDER,
         'email' => 'jane@example.com',

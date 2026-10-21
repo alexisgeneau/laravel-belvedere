@@ -57,13 +57,14 @@ final readonly class NativeQueue
         $now = Carbon::now()->getTimestamp();
         $expired = $now - $this->retryAfter($connection);
 
+        // Aliases are suffixed because "delayed" is a reserved word on MySQL and MariaDB.
         $rows = $this->table($connection)
             ->selectRaw(
                 'queue,'
-                .' sum(case when reserved_at is null and available_at <= ? then 1 else 0 end) as pending,'
-                .' sum(case when reserved_at is null and available_at > ? then 1 else 0 end) as delayed,'
-                .' sum(case when reserved_at is not null and reserved_at >= ? then 1 else 0 end) as running,'
-                .' sum(case when reserved_at is not null and reserved_at < ? then 1 else 0 end) as stuck',
+                .' sum(case when reserved_at is null and available_at <= ? then 1 else 0 end) as pending_jobs,'
+                .' sum(case when reserved_at is null and available_at > ? then 1 else 0 end) as delayed_jobs,'
+                .' sum(case when reserved_at is not null and reserved_at >= ? then 1 else 0 end) as running_jobs,'
+                .' sum(case when reserved_at is not null and reserved_at < ? then 1 else 0 end) as stuck_jobs',
                 [$now, $now, $expired, $expired],
             )
             ->groupBy('queue')
@@ -78,10 +79,10 @@ final readonly class NativeQueue
             return new QueueCounts(
                 connection: $connection,
                 queue: $queue,
-                pending: (int) ($row->pending ?? 0),
-                delayed: (int) ($row->delayed ?? 0),
-                running: (int) ($row->running ?? 0),
-                stuck: (int) ($row->stuck ?? 0),
+                pending: (int) ($row->pending_jobs ?? 0),
+                delayed: (int) ($row->delayed_jobs ?? 0),
+                running: (int) ($row->running_jobs ?? 0),
+                stuck: (int) ($row->stuck_jobs ?? 0),
                 paused: $this->pauser->isPaused($connection, $queue),
             );
         });

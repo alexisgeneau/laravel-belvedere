@@ -2,7 +2,7 @@
 
 Horizon-style queue dashboard for Laravel's `database` queue driver.
 
-Horizon only works with Redis. Belvedere gives applications that run on the `database` driver (the default since Laravel 11) the same visibility and the same actions: pending, running, completed and failed jobs, batches, workers, per-queue metrics, retries, purges and queue pausing. No Redis, no Node, no third-party service.
+Horizon only works with Redis. Belvedere gives applications that run on the `database` driver (Laravel's default since version 11) the same visibility and the same actions: pending, running, completed and failed jobs, batches, workers, per-queue metrics, retries, purges and queue pausing. No Redis, no Node, no third-party service.
 
 ![Belvedere dashboard](art/dashboard.png)
 
@@ -11,7 +11,7 @@ Horizon only works with Redis. Belvedere gives applications that run on the `dat
 ## Requirements
 
 - PHP 8.2+
-- Laravel 11, 12 or 13
+- Laravel 12 or 13 (Laravel 11 no longer receives security fixes and Composer refuses to install it by default)
 - MySQL 8.0 or newer (tested on 8.4 LTS and 9.7 LTS), MariaDB (tested on 11.8), PostgreSQL (tested on 17) or SQLite
 
 ## Installation
