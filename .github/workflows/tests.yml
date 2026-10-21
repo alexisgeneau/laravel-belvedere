@@ -119,3 +119,52 @@ jobs:
 
       - name: PHPStan
         run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
+
+  ui:
+    name: Dashboard build and smoke test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo, pdo_sqlite
+          coverage: none
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          composer update --prefer-dist --no-interaction
+          npm ci
+
+      - name: Build the dashboard
+        run: npm run build
+
+      - name: Check that the committed build is up to date
+        run: |
+          if [ -n "$(git status --porcelain -- resources/dist)" ]; then
+            git --no-pager diff --stat -- resources/dist
+            echo "::error::resources/dist does not match resources/js and resources/sass: run npm run build and commit the result."
+            exit 1
+          fi
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke test
+        run: npm run test:ui
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7

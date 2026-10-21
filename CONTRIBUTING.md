@@ -19,7 +19,7 @@ composer analyse
 composer lint
 ```
 
-5. Rebuild the assets if you changed `resources/js` or `resources/sass` (`npm run build`) and commit `resources/dist` with the change.
+5. Rebuild the assets if you changed `resources/js` or `resources/sass` (`npm run build`) and commit `resources/dist` with the change: the CI rebuilds them and fails when the committed files differ. `npm run test:ui` runs the Playwright smoke test, which opens every screen against the seeded workbench and fails on any console error or failed request (`npx playwright install chromium` the first time).
 
 Keep pull requests focused: one change, its tests and, when it affects users, a line in `CHANGELOG.md` under *Unreleased*.
 

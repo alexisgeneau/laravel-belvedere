@@ -7,3 +7,5 @@
 /.vscode/
 /.DS_Store
 /.phpstan.cache/
+/test-results/
+/playwright-report/

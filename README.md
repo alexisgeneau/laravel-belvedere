@@ -143,11 +143,12 @@ composer analyse   # PHPStan (Larastan, level 6)
 composer lint      # Pint
 ```
 
-The front end lives in `resources/js` and `resources/sass` (Vue 3, Vite, Bootstrap, Chart.js) and is compiled into `resources/dist`, which is committed:
+The front end lives in `resources/js` and `resources/sass` (Vue 3, Vite, Bootstrap, Chart.js) and is compiled into `resources/dist`, which is committed; the CI fails when the committed build no longer matches the sources:
 
 ```bash
 npm install
 npm run build
+npm run test:ui    # Playwright smoke test of every screen against the workbench
 ```
 
 To try the dashboard against a disposable application seeded with sample jobs:
