@@ -69,8 +69,7 @@ final readonly class MetricsReader
             ->where('subject_type', $type->value)
             ->where('subject', $subject)
             ->where('bucket', '>=', Carbon::createFromTimestamp($start))
-            ->orderBy('bucket')
-            ->get();
+            ->get(['bucket', 'processed', 'failed', 'released', 'wait_ms_sum', 'run_ms_sum', 'run_ms_max']);
 
         $buckets = [];
 
@@ -79,7 +78,7 @@ final readonly class MetricsReader
         }
 
         foreach ($rows as $row) {
-            $time = (int) (floor(Carbon::parse((string) $row->bucket)->getTimestamp() / $step) * $step);
+            $time = (int) (floor((int) strtotime((string) $row->bucket) / $step) * $step);
 
             if (! isset($buckets[$time])) {
                 continue;

@@ -5,39 +5,50 @@ declare(strict_types=1);
 namespace Workbench\Database\Seeders;
 
 use Belvedere\Models\MonitoredTag;
-use Belvedere\Tests\Fixtures\Jobs\BatchedJob;
-use Belvedere\Tests\Fixtures\Jobs\FailingJob;
-use Belvedere\Tests\Fixtures\Jobs\ReleasingJob;
-use Belvedere\Tests\Fixtures\Jobs\SucceedingJob;
-use Belvedere\Tests\Fixtures\Jobs\TaggedJob;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
+use Workbench\App\Jobs\GenerateReport;
+use Workbench\App\Jobs\ProcessPayment;
+use Workbench\App\Jobs\RenderThumbnail;
+use Workbench\App\Jobs\SendInvoice;
+use Workbench\App\Jobs\SyncCatalog;
 
 final class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        MonitoredTag::query()->firstOrCreate(['tag' => 'reports'], ['created_at' => Carbon::now()]);
+        MonitoredTag::query()->firstOrCreate(['tag' => 'billing'], ['created_at' => Carbon::now()]);
+        MonitoredTag::query()->firstOrCreate(['tag' => 'tenant:42'], ['created_at' => Carbon::now()->subDay()]);
 
-        for ($i = 0; $i < 25; $i++) {
-            SucceedingJob::dispatch();
+        for ($i = 1; $i <= 30; $i++) {
+            SendInvoice::dispatch(1000 + $i, "customer{$i}@example.com");
         }
 
-        TaggedJob::dispatch();
-        ReleasingJob::dispatch();
-        FailingJob::dispatch();
-        SucceedingJob::dispatch()->onQueue('emails');
-
-        Bus::batch([new BatchedJob, new BatchedJob, new BatchedJob(fails: true)])->name('Nightly invoices')->allowFailures()->dispatch();
-
-        Artisan::call('queue:work', ['connection' => 'database', '--queue' => 'default,emails', '--stop-when-empty' => true, '--sleep' => 0]);
-
-        for ($i = 0; $i < 5; $i++) {
-            SucceedingJob::dispatch()->onQueue('reports');
+        for ($i = 1; $i <= 6; $i++) {
+            RenderThumbnail::dispatch(500 + $i)->onQueue('media');
         }
 
-        TaggedJob::dispatch()->delay(Carbon::now()->addMinutes(30));
+        GenerateReport::dispatch(42);
+        GenerateReport::dispatch(42, 'xlsx');
+        GenerateReport::dispatch(7);
+        SyncCatalog::dispatch('ftp://supplier.example.com/catalog.csv');
+        ProcessPayment::dispatch(2001, 4990);
+        ProcessPayment::dispatch(2002, 12900);
+
+        Bus::batch([new SendInvoice(3001, 'acme@example.com'), new SendInvoice(3002, 'globex@example.com'), new ProcessPayment(3003, 7500)])
+            ->name('Nightly invoices')
+            ->allowFailures()
+            ->dispatch();
+
+        Artisan::call('queue:work', ['connection' => 'database', '--queue' => 'default,media', '--stop-when-empty' => true, '--sleep' => 0]);
+
+        for ($i = 1; $i <= 8; $i++) {
+            GenerateReport::dispatch(100 + $i)->onQueue('reports');
+        }
+
+        SyncCatalog::dispatch('ftp://supplier.example.com/catalog.csv')->delay(Carbon::now()->addMinutes(30));
+        SendInvoice::dispatch(1099, 'late@example.com')->delay(Carbon::now()->addHours(2));
     }
 }

@@ -23,11 +23,19 @@ it('exposes the job identity from the payload', function (): void {
         ->and($payload->commandName())->toBe('App\Jobs\Ship');
 });
 
-it('resets attempts and drops the retry deadline when prepared for a retry', function (): void {
-    $retry = Payload::fromJson('{"uuid":"u","attempts":3,"retryUntil":42}')->forRetry();
+it('resets attempts, drops the retry deadline and stamps the dispatch time when prepared for a retry', function (): void {
+    $retry = Payload::fromJson('{"uuid":"u","attempts":3,"retryUntil":42,"belvedere":{"tags":["a"],"queued_at":1}}')->forRetry();
 
-    expect($retry->data)->toBe(['uuid' => 'u', 'attempts' => 0])
-        ->and($retry->toJson())->toBe('{"uuid":"u","attempts":0}');
+    expect($retry->attempts())->toBe(0)
+        ->and($retry->data)->not->toHaveKey('retryUntil')
+        ->and($retry->tags())->toBe(['a'])
+        ->and($retry->queuedAt()?->diffInSeconds(now(), true))->toBeLessThan(5)
+        ->and(json_decode($retry->toJson(), true)['belvedere']['queued_at'])->toBeFloat();
+});
+
+it('reads the dispatch time stored in the payload metadata', function (): void {
+    expect(Payload::fromJson('{"uuid":"u","belvedere":{"queued_at":1700000000.25}}')->queuedAt()?->format('U.u'))->toBe('1700000000.250000')
+        ->and(Payload::fromJson('{"uuid":"u"}')->queuedAt())->toBeNull();
 });
 
 it('returns null for malformed json', function (): void {

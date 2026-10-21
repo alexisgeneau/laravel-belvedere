@@ -1,5 +1,5 @@
 {
-    "name": "alexisgeneau/belvedere",
+    "name": "alexisgeneau/laravel-belvedere",
     "description": "Horizon-style queue dashboard for Laravel's database queue driver.",
     "keywords": [
         "laravel",
@@ -9,7 +9,7 @@
         "monitoring",
         "database"
     ],
-    "homepage": "https://github.com/alexisgeneau/belvedere",
+    "homepage": "https://github.com/alexisgeneau/laravel-belvedere",
     "license": "MIT",
     "type": "library",
     "authors": [
@@ -52,7 +52,8 @@
     "autoload-dev": {
         "psr-4": {
             "Belvedere\\Tests\\": "tests/",
-            "Workbench\\Database\\Seeders\\": "workbench/database/seeders/"
+            "Workbench\\Database\\Seeders\\": "workbench/database/seeders/",
+            "Workbench\\App\\": "workbench/app/"
         }
     },
     "scripts": {
@@ -63,6 +64,10 @@
         "serve": [
             "@build",
             "@php vendor/bin/testbench serve --ansi"
+        ],
+        "bench": [
+            "@php workbench/bench.php --baseline",
+            "@php workbench/bench.php"
         ]
     },
     "extra": {

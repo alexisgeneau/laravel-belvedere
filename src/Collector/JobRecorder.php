@@ -20,7 +20,7 @@ final class JobRecorder
 {
     private const EXCEPTION_MAX_LENGTH = 200_000;
 
-    /** @var array<string, array{attempt: int, started: float, wait: int|null, name: string, queue: string}> */
+    /** @var array<string, array{started: float, wait: int|null, name: string, queue: string}> */
     private array $running = [];
 
     /** @var array<string, string> */
@@ -51,7 +51,7 @@ final class JobRecorder
                 'tags' => $payload->tags(),
                 'snapshot' => $payload->snapshot(),
                 'batch_id' => $payload->batchId(),
-                'queued_at' => Carbon::now(),
+                'queued_at' => $payload->queuedAt() ?? Carbon::now(),
             ]);
         } catch (UniqueConstraintViolationException) {
             return;
@@ -69,52 +69,19 @@ final class JobRecorder
         }
 
         $now = Carbon::now();
-        $latest = Job::query()->forUuid($uuid)->orderByDesc('attempt')->first();
-        $name = $job->resolveName();
-        $queue = $job->getQueue();
+        $payload = new Payload($job->payload());
+        $queuedAt = $payload->queuedAt();
+        $waitMs = $queuedAt !== null ? $this->millisecondsBetween($queuedAt, $now) : null;
 
-        if ($latest !== null && $latest->status === JobStatus::Queued) {
-            $attempt = $latest->attempt;
-            $waitMs = $latest->queued_at !== null ? $this->millisecondsBetween($latest->queued_at, $now) : null;
-
-            $latest->forceFill([
-                'status' => JobStatus::Running,
-                'started_at' => $now,
-                'worker_id' => WorkerIdentity::id(),
-                'wait_ms' => $waitMs,
-            ])->save();
-        } else {
-            $payload = new Payload($job->payload());
-            $attempt = $latest !== null ? $latest->attempt + 1 : 1;
-            $queuedAt = $latest?->finished_at;
-            $waitMs = $queuedAt !== null ? $this->millisecondsBetween($queuedAt, $now) : null;
-            $tags = $payload->tags() ?: ($latest->tags ?? []);
-
-            $model = Job::query()->create([
-                'uuid' => $uuid,
-                'attempt' => $attempt,
-                'connection' => $connection,
-                'queue' => $queue,
-                'name' => $name,
-                'status' => JobStatus::Running,
-                'tags' => $tags,
-                'snapshot' => $payload->snapshot() ?? $latest?->snapshot,
-                'batch_id' => $payload->batchId() ?? $latest?->batch_id,
-                'worker_id' => WorkerIdentity::id(),
-                'queued_at' => $queuedAt,
-                'started_at' => $now,
-                'wait_ms' => $waitMs,
-            ]);
-
-            $this->storeTags($model->id, $tags);
+        if ($waitMs === null || ! $this->startQueuedAttempt($uuid, $now, $waitMs)) {
+            $waitMs = $this->startNextAttempt($connection, $job, $payload, $now);
         }
 
         $this->running[$uuid] = [
-            'attempt' => $attempt,
             'started' => microtime(true),
             'wait' => $waitMs,
-            'name' => $name,
-            'queue' => $queue,
+            'name' => $job->resolveName(),
+            'queue' => $job->getQueue(),
         ];
     }
 
@@ -170,15 +137,9 @@ final class JobRecorder
         $runMs = $running !== null ? (int) round((microtime(true) - $running['started']) * 1000) : null;
         $now = Carbon::now();
 
-        $query = Job::query()->forUuid($uuid);
+        $query = Job::query()->forUuid($uuid)->orderByDesc('attempt')->limit(1);
 
-        if ($running !== null) {
-            $query->where('attempt', $running['attempt']);
-        } else {
-            $query->orderByDesc('attempt')->limit(1);
-        }
-
-        if ($status === JobStatus::TimedOut) {
+        if ($running !== null || $status === JobStatus::TimedOut) {
             $query->where('status', JobStatus::Running->value);
         }
 
@@ -193,7 +154,7 @@ final class JobRecorder
         if ($updated === 0 && $status !== JobStatus::TimedOut) {
             Job::query()->insertOrIgnore([
                 'uuid' => $uuid,
-                'attempt' => $running['attempt'] ?? 1,
+                'attempt' => 1,
                 'connection' => $connection,
                 'queue' => $queue,
                 'name' => $name,
@@ -206,6 +167,59 @@ final class JobRecorder
         }
 
         return new Completion($connection, $queue, $name, $status, $running['wait'] ?? null, $runMs);
+    }
+
+    private function startQueuedAttempt(string $uuid, Carbon $now, int $waitMs): bool
+    {
+        return Job::query()->forUuid($uuid)->where('status', JobStatus::Queued->value)->update([
+            'status' => JobStatus::Running->value,
+            'started_at' => $now->format(Job::DATE_FORMAT),
+            'worker_id' => WorkerIdentity::id(),
+            'wait_ms' => $waitMs,
+        ]) > 0;
+    }
+
+    private function startNextAttempt(string $connection, QueuedJob $job, Payload $payload, Carbon $now): ?int
+    {
+        $uuid = (string) $job->uuid();
+        $latest = Job::query()->forUuid($uuid)->orderByDesc('attempt')->first();
+
+        if ($latest !== null && $latest->status === JobStatus::Queued) {
+            $waitMs = $latest->queued_at !== null ? $this->millisecondsBetween($latest->queued_at, $now) : null;
+
+            $latest->forceFill([
+                'status' => JobStatus::Running,
+                'started_at' => $now,
+                'worker_id' => WorkerIdentity::id(),
+                'wait_ms' => $waitMs,
+            ])->save();
+
+            return $waitMs;
+        }
+
+        $queuedAt = $latest->finished_at ?? $payload->queuedAt();
+        $waitMs = $queuedAt !== null ? $this->millisecondsBetween($queuedAt, $now) : null;
+        $tags = $payload->tags() ?: ($latest->tags ?? []);
+
+        $model = Job::query()->create([
+            'uuid' => $uuid,
+            'attempt' => $latest !== null ? $latest->attempt + 1 : 1,
+            'connection' => $connection,
+            'queue' => $job->getQueue(),
+            'name' => $job->resolveName(),
+            'status' => JobStatus::Running,
+            'tags' => $tags,
+            'snapshot' => $payload->snapshot() ?? $latest?->snapshot,
+            'batch_id' => $payload->batchId() ?? $latest?->batch_id,
+            'worker_id' => WorkerIdentity::id(),
+            'queued_at' => $queuedAt,
+            'started_at' => $now,
+            'wait_ms' => $waitMs,
+        ]);
+
+        $this->storeTags($model->id, $tags);
+
+        return $waitMs;
     }
 
     /** @param  list<string>  $tags */

@@ -39,7 +39,7 @@ return new class extends Migration
             $table->unsignedInteger('memory_kb')->nullable();
 
             $table->unique(['uuid', 'attempt']);
-            $table->index(['connection', 'queue', 'status', 'finished_at']);
+            $table->index(['connection', 'finished_at']);
             $table->index(['status', 'finished_at']);
             $table->index(['name', 'finished_at']);
             $table->index('batch_id');

@@ -31,6 +31,7 @@ final readonly class PayloadMetadata
 
         try {
             return [Payload::METADATA => [
+                'queued_at' => microtime(true),
                 'tags' => Tags::of($job),
                 'batch' => $this->batchId($job),
                 'snapshot' => $this->snapshots && ! $job instanceof ShouldBeEncrypted ? $this->snapshot->of($job) : null,

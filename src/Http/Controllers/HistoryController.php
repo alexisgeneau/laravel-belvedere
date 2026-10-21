@@ -25,7 +25,7 @@ final class HistoryController extends Controller
         $from = $this->optionalString($request, 'from');
         $to = $this->optionalString($request, 'to');
 
-        abort_if($status !== null && JobStatus::tryFrom($status) === null, 404);
+        abort_if($status !== null && ! in_array($status, JobStatus::finalValues(), true), 404);
 
         $jobs = Job::query()
             ->where('connection', $connection)
@@ -38,6 +38,7 @@ final class HistoryController extends Controller
             }))
             ->when($from !== null, fn (Builder $query): Builder => $query->where('finished_at', '>=', Carbon::parse($from)))
             ->when($to !== null, fn (Builder $query): Builder => $query->where('finished_at', '<=', Carbon::parse($to)))
+            ->orderByDesc('finished_at')
             ->orderByDesc('id')
             ->cursorPaginate($this->limit($request));
 

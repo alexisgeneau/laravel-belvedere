@@ -99,11 +99,14 @@ final readonly class QueueEventSubscriber
 
     public function onLooping(Looping $event): ?bool
     {
+        $this->metrics->looping();
+
         return $this->heartbeat->beat($event) ? false : null;
     }
 
     public function onWorkerStopping(WorkerStopping $event): void
     {
+        $this->metrics->stopping();
         $this->heartbeat->stopping();
     }
 

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 return [
 
+    'enabled' => (bool) env('BELVEDERE_ENABLED', true),
+
     'path' => env('BELVEDERE_PATH', 'belvedere'),
 
     'domain' => env('BELVEDERE_DOMAIN'),

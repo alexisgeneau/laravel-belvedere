@@ -4,18 +4,20 @@ Horizon-style queue dashboard for Laravel's `database` queue driver.
 
 Horizon only works with Redis. Belvedere gives applications that run on the `database` driver (the default since Laravel 11) the same visibility and the same actions: pending, running, completed and failed jobs, batches, workers, per-queue metrics, retries, purges and queue pausing. No Redis, no Node, no third-party service.
 
+![Belvedere dashboard](art/dashboard.png)
+
 > **Status:** pre-release. The collector, storage, JSON API, commands, alerts and the dashboard are complete and tested; the package has not been tagged yet.
 
 ## Requirements
 
 - PHP 8.2+
 - Laravel 11, 12 or 13
-- MySQL 8, MariaDB, PostgreSQL or SQLite
+- MySQL 8.0 or newer (tested on 8.4 LTS and 9.7 LTS), MariaDB (tested on 11.8), PostgreSQL (tested on 17) or SQLite
 
 ## Installation
 
 ```bash
-composer require alexisgeneau/belvedere
+composer require alexisgeneau/laravel-belvedere
 php artisan belvedere:install
 php artisan migrate
 ```
@@ -51,13 +53,17 @@ Every list refreshes itself (`refresh_seconds`), follows the system color scheme
 
 If the application sends a `Content-Security-Policy` header, call `Vite::useCspNonce()` in a middleware: Belvedere reuses that nonce on its inline style and script tags.
 
+![Metrics of a queue](art/metrics.png)
+
+![Dashboard in dark mode](art/dashboard-dark.png)
+
 ## How it works
 
 Belvedere listens to the queue events Laravel already dispatches (`JobQueued`, `JobProcessing`, `JobProcessed`, `JobFailed`, `JobReleasedAfterException`, `JobTimedOut`, `Looping`, `WorkerStopping`, `QueueBusy`) and stores one row per job execution in its own tables (`belvedere_jobs`, `belvedere_job_tags`, `belvedere_workers`, `belvedere_metrics`, `belvedere_actions`, `belvedere_monitored_tags`). Live state (pending, delayed, running, stuck) is read straight from Laravel's `jobs`, `failed_jobs` and `job_batches` tables, which are never modified except through the actions you trigger.
 
 Tags follow Horizon's convention: a `tags()` method on the job, otherwise the Eloquent models found in its public properties. Tags, the batch id and a redacted snapshot of the job's public properties are computed when Laravel builds the payload (`Queue::createPayloadUsing`) and stored under its `belvedere` key, so they travel with the job through bulk pushes, batches and `queue:retry`. Jobs implementing `ShouldBeEncrypted` get tags but no snapshot. Payloads are never unserialized in the web process.
 
-Cost per job: one `INSERT` when the job is queued, one `UPDATE` when it starts, one `UPDATE` when it finishes and one metrics upsert. Use `sampling`, disable snapshots or point `storage.connection` to a dedicated database to lower it further.
+Cost per job: one `INSERT` when the job is queued (plus one for its tags), one `UPDATE` when it starts and one when it finishes. Metrics are accumulated in memory by each worker and flushed at most every 5 seconds, so a worker killed with `SIGKILL` loses at most a few seconds of them. Use `sampling`, disable snapshots or point `storage.connection` to a dedicated database to lower the cost further.
 
 ## Configuration
 
@@ -65,6 +71,7 @@ Cost per job: one `INSERT` when the job is queued, one `UPDATE` when it starts, 
 
 | Key | Default | Purpose |
 | --- | --- | --- |
+| `enabled` | `true` | Collect queue events and payload metadata (the dashboard itself stays available) |
 | `path` | `belvedere` | URI prefix of the dashboard and its API |
 | `middleware` | `['web']` | Middleware applied before the authorization check |
 | `read_only` | `false` | Disable every action while keeping the dashboard readable |
@@ -146,6 +153,8 @@ composer serve
 ```
 
 then open `http://127.0.0.1:8000/belvedere`.
+
+`composer bench` measures the overhead per job against a run with the collector disabled, the latency of every read endpoint once the history holds a million rows, and the duration of `belvedere:prune`. It runs on SQLite by default; set `BENCH_DB_CONNECTION=mysql` or `pgsql` with `BENCH_DB_HOST`, `BENCH_DB_PORT`, `BENCH_DB_DATABASE`, `BENCH_DB_USERNAME` and `BENCH_DB_PASSWORD` to measure the database you run in production. The script drops and recreates the queue and Belvedere tables of that database.
 
 ## License
 

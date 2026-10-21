@@ -129,6 +129,10 @@ final class BelvedereServiceProvider extends PackageServiceProvider
 
     public function packageBooted(): void
     {
+        if (! $this->app->make(Repository::class)->get('belvedere.enabled', true)) {
+            return;
+        }
+
         $this->app->make(Dispatcher::class)->subscribe(QueueEventSubscriber::class);
 
         Queue::createPayloadUsing(

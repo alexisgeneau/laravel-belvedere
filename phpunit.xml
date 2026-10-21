@@ -12,6 +12,9 @@
         <testsuite name="Feature">
             <directory>tests/Feature</directory>
         </testsuite>
+        <testsuite name="Disabled">
+            <directory>tests/Disabled</directory>
+        </testsuite>
     </testsuites>
     <source>
         <include>

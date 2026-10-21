@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Belvedere\Support;
 
+use Illuminate\Support\Carbon;
 use JsonException;
 
 final readonly class Payload
@@ -86,10 +87,18 @@ final readonly class Payload
         return is_array($snapshot) ? $snapshot : null;
     }
 
+    public function queuedAt(): ?Carbon
+    {
+        $timestamp = $this->metadata()['queued_at'] ?? null;
+
+        return is_float($timestamp) || is_int($timestamp) ? Carbon::createFromTimestamp($timestamp) : null;
+    }
+
     public function forRetry(): self
     {
         $data = $this->data;
         $data['attempts'] = 0;
+        $data[self::METADATA] = [...$this->metadata(), 'queued_at' => microtime(true)];
         unset($data['retryUntil']);
 
         return new self($data);

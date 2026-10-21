@@ -10,3 +10,5 @@
 - Alerts for backlogs, failure rates and dead workers (mail, Slack).
 - JSON API and console commands.
 - Dashboard derived from Horizon's interface: overview, monitoring, metrics, batches, pending, running, completed and failed jobs, workers, light and dark schemes.
+- `enabled` option (`BELVEDERE_ENABLED`) to switch the collector off, for test suites for instance.
+- Workbench application (`composer serve`) and benchmark (`composer bench`).

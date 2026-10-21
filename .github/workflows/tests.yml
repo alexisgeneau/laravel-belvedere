@@ -23,31 +23,53 @@ jobs:
             testbench: '^10.0'
           - laravel: '13'
             testbench: '^11.0'
-          - php: '8.3'
+          - php: '8.4'
             laravel: '13'
             testbench: '^11.0'
             stability: 'prefer-stable'
-            database: 'mysql'
-          - php: '8.3'
+            database: 'mysql-8.4'
+            driver: 'mysql'
+            mysql: 'mysql:8.4'
+            health: 'mysqladmin ping -h 127.0.0.1 -psecret'
+          - php: '8.4'
             laravel: '13'
             testbench: '^11.0'
             stability: 'prefer-stable'
-            database: 'pgsql'
+            database: 'mysql-9.7'
+            driver: 'mysql'
+            mysql: 'mysql:9.7'
+            health: 'mysqladmin ping -h 127.0.0.1 -psecret'
+          - php: '8.4'
+            laravel: '13'
+            testbench: '^11.0'
+            stability: 'prefer-stable'
+            database: 'mariadb-11.8'
+            driver: 'mysql'
+            mysql: 'mariadb:11.8'
+            health: 'healthcheck.sh --connect --innodb_initialized'
+          - php: '8.4'
+            laravel: '13'
+            testbench: '^11.0'
+            stability: 'prefer-stable'
+            database: 'pgsql-17'
+            driver: 'pgsql'
         exclude:
           - php: '8.2'
             laravel: '13'
 
     services:
       mysql:
-        image: mysql:8.0
+        image: ${{ matrix.mysql || 'mysql:8.4' }}
         env:
           MYSQL_DATABASE: belvedere
           MYSQL_ROOT_PASSWORD: secret
+          MARIADB_DATABASE: belvedere
+          MARIADB_ROOT_PASSWORD: secret
         ports:
           - 3306:3306
-        options: --health-cmd="mysqladmin ping -h 127.0.0.1 -psecret" --health-interval=10s --health-timeout=5s --health-retries=5
+        options: --health-cmd="${{ matrix.health || 'mysqladmin ping -h 127.0.0.1 -psecret' }}" --health-interval=10s --health-timeout=5s --health-retries=10
       pgsql:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_DB: belvedere
           POSTGRES_USER: belvedere
@@ -73,10 +95,10 @@ jobs:
       - name: Run tests
         run: vendor/bin/pest --ci
         env:
-          BELVEDERE_TEST_DB: ${{ matrix.database }}
+          BELVEDERE_TEST_DB: ${{ matrix.driver || 'sqlite' }}
           BELVEDERE_TEST_DB_HOST: 127.0.0.1
           BELVEDERE_TEST_DB_DATABASE: belvedere
-          BELVEDERE_TEST_DB_USERNAME: ${{ matrix.database == 'mysql' && 'root' || 'belvedere' }}
+          BELVEDERE_TEST_DB_USERNAME: ${{ matrix.driver == 'mysql' && 'root' || 'belvedere' }}
           BELVEDERE_TEST_DB_PASSWORD: secret
 
   static:

@@ -28,14 +28,14 @@ final class PruneCommand extends Command
         $completed = [JobStatus::Completed->value, JobStatus::Released->value, JobStatus::TimedOut->value];
 
         $deleted = [
-            'completed jobs' => $this->prune(
+            'completed jobs' => $this->pruneJobs(
+                $storage,
                 $storage->query('jobs')->whereIn('status', $completed),
-                'finished_at',
                 $hours('completed_hours', 168),
             ),
-            'failed jobs' => $this->prune(
+            'failed jobs' => $this->pruneJobs(
+                $storage,
                 $storage->query('jobs')->where('status', JobStatus::Failed->value),
-                'finished_at',
                 $hours('failed_hours', 720),
             ),
             'metrics' => $this->prune($storage->query('metrics'), 'bucket', $hours('metrics_hours', 168)),
@@ -47,15 +47,30 @@ final class PruneCommand extends Command
             ),
         ];
 
-        $deleted['orphan tags'] = $storage->query('job_tags')
-            ->whereNotIn('job_id', $storage->query('jobs')->select('id'))
-            ->delete();
-
         foreach ($deleted as $label => $count) {
             $this->components->twoColumnDetail(ucfirst($label), (string) $count);
         }
 
         return self::SUCCESS;
+    }
+
+    private function pruneJobs(Storage $storage, Builder $query, int $hours): int
+    {
+        $before = Carbon::now()->subHours($hours);
+        $total = 0;
+
+        do {
+            $ids = (clone $query)->where('finished_at', '<', $before)->limit(self::CHUNK)->pluck('id')->all();
+
+            if ($ids === []) {
+                break;
+            }
+
+            $storage->query('job_tags')->whereIn('job_id', $ids)->delete();
+            $total += $storage->query('jobs')->whereIn('id', $ids)->delete();
+        } while (count($ids) === self::CHUNK);
+
+        return $total;
     }
 
     private function prune(Builder $query, string $column, int $hours): int
