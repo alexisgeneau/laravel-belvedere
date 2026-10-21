@@ -118,6 +118,7 @@ final class BelvedereServiceProvider extends PackageServiceProvider
 
             return new AlertEvaluator(
                 $app->make(NativeQueue::class),
+                $app->make(QueuePauser::class),
                 $app->make(Storage::class),
                 $app->make('cache')->store($config->get('belvedere.cache_store')),
                 $config,

@@ -6,9 +6,11 @@ namespace Belvedere\Alerts;
 
 use Belvedere\Models\Worker;
 use Belvedere\Notifications\FailureRateExceeded;
+use Belvedere\Notifications\LongWait;
 use Belvedere\Notifications\QueueBacklog;
 use Belvedere\Notifications\WorkerDied;
 use Belvedere\Queues\NativeQueue;
+use Belvedere\Queues\QueuePauser;
 use Belvedere\Support\Storage;
 use Illuminate\Contracts\Cache\Repository as Cache;
 use Illuminate\Contracts\Config\Repository as Config;
@@ -20,6 +22,7 @@ final readonly class AlertEvaluator
 {
     public function __construct(
         private NativeQueue $native,
+        private QueuePauser $pauser,
         private Storage $storage,
         private Cache $cache,
         private Config $config,
@@ -28,7 +31,7 @@ final readonly class AlertEvaluator
     /** @return Collection<int, Alert> */
     public function evaluate(): Collection
     {
-        $alerts = collect([...$this->backlogs(), ...$this->failureRates(), ...$this->deadWorkers()]);
+        $alerts = collect([...$this->backlogs(), ...$this->waits(), ...$this->failureRates(), ...$this->deadWorkers()]);
 
         $alerts->each(fn (Alert $alert) => $this->notify($alert));
 
@@ -56,6 +59,42 @@ final readonly class AlertEvaluator
                 if ($counts->backlog() >= $threshold) {
                     $alerts[] = $this->backlogAlert($connection, $counts->queue, $counts->backlog(), $threshold);
                 }
+            }
+        }
+
+        return $alerts;
+    }
+
+    /**
+     * Queues whose oldest job ready to run has waited longer than allowed.
+     * Paused queues are skipped: their backlog is expected.
+     *
+     * @return list<Alert>
+     */
+    private function waits(): array
+    {
+        $default = max(0, (int) $this->config->get('belvedere.alerts.wait_seconds', 0));
+        $perQueue = (array) $this->config->get('belvedere.alerts.wait_seconds_per_queue', []);
+
+        if ($default <= 0 && array_filter($perQueue) === []) {
+            return [];
+        }
+
+        $alerts = [];
+
+        foreach ($this->native->connections() as $connection) {
+            foreach ($this->native->oldestWaits($connection) as $queue => $seconds) {
+                $threshold = max(0, (int) ($perQueue["{$connection}:{$queue}"] ?? $default));
+
+                if ($threshold <= 0 || $seconds < $threshold || $this->pauser->isPaused($connection, $queue)) {
+                    continue;
+                }
+
+                $alerts[] = new Alert(
+                    "wait:{$connection}:{$queue}",
+                    "The oldest job on queue [{$queue}] ({$connection}) has been waiting for ".LongWait::duration($seconds).' (threshold '.LongWait::duration($threshold).').',
+                    new LongWait($connection, $queue, $seconds, $threshold),
+                );
             }
         }
 

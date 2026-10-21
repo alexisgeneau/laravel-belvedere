@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Belvedere\Http\Controllers;
 
+use Belvedere\Belvedere;
 use Belvedere\Enums\JobStatus;
 use Belvedere\Models\Job;
 use Belvedere\Queues\NativeQueue;
@@ -27,9 +28,16 @@ final class HistoryController extends Controller
 
         abort_if($status !== null && ! in_array($status, JobStatus::finalValues(), true), 404);
 
+        // Silenced job classes are kept out of the completed list unless asked for explicitly.
+        $silenced = Belvedere::silencedJobs();
+        $onlySilenced = $request->boolean('silenced');
+        $hideSilenced = ! $onlySilenced && $silenced !== [] && $status === JobStatus::Completed->value;
+
         $jobs = Job::query()
             ->where('connection', $connection)
             ->when($status !== null, fn (Builder $query): Builder => $query->where('status', $status), fn (Builder $query): Builder => $query->finished())
+            ->when($onlySilenced, fn (Builder $query): Builder => $query->whereIn('name', $silenced))
+            ->when($hideSilenced, fn (Builder $query): Builder => $query->whereNotIn('name', $silenced))
             ->when($queue !== null, fn (Builder $query): Builder => $query->where('queue', $queue))
             ->when($name !== null, fn (Builder $query): Builder => $query->where('name', $name))
             ->when($tag !== null, fn (Builder $query): Builder => $query->withTag($tag))

@@ -94,6 +94,29 @@ final readonly class NativeQueue
         });
     }
 
+    /**
+     * How long the job at the head of each queue has been waiting, in seconds.
+     *
+     * @return Collection<string, int<0, max>> keyed by queue, only the queues with a job ready to run
+     */
+    public function oldestWaits(string $connection): Collection
+    {
+        if (! $this->supports($connection)) {
+            return collect();
+        }
+
+        $now = Carbon::now()->getTimestamp();
+
+        return $this->table($connection)
+            ->selectRaw('queue, min(available_at) as oldest_available_at')
+            ->whereNull('reserved_at')
+            ->where('available_at', '<=', $now)
+            ->groupBy('queue')
+            ->orderBy('queue')
+            ->get()
+            ->mapWithKeys(static fn (object $row): array => [(string) $row->queue => max(0, $now - (int) $row->oldest_available_at)]);
+    }
+
     /** @return Collection<int, NativeJob> */
     public function jobs(string $connection, NativeState $state, ?string $queue, int $limit, ?int $beforeId): Collection
     {

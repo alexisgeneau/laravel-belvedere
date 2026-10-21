@@ -37,6 +37,15 @@ final class Belvedere
         return $user->email ?? $user->name ?? (string) $user->getAuthIdentifier();
     }
 
+    /** @return list<string> Job classes kept out of the Completed Jobs list. */
+    public static function silencedJobs(): array
+    {
+        return array_values(array_filter(
+            (array) config('belvedere.silenced', []),
+            static fn (mixed $name): bool => is_string($name) && $name !== '',
+        ));
+    }
+
     public static function flushState(): void
     {
         self::$authUsing = null;

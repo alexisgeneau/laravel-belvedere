@@ -1,5 +1,6 @@
 providers:
   - Belvedere\BelvedereServiceProvider
+  - Workbench\App\Providers\WorkbenchServiceProvider
 
 migrations:
   - tests/database/migrations

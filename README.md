@@ -47,7 +47,7 @@ Schedule::command('belvedere:check')->everyMinute();
 
 ## Dashboard
 
-The interface is a fork of Horizon's, with the same layout and the same screens so nobody has to relearn anything: Dashboard (throughput, backlog, workers, per-queue workload with pause, resume and purge), Monitoring (tags), Metrics (throughput, runtime and wait time charts by job or by queue over 1 hour, 24 hours or 7 days), Batches, Pending Jobs (pending and delayed), Running Jobs (running and stuck), Completed Jobs (with released, timed-out and lost attempts), Failed Jobs (search, retry, retry all, flush) and Workers.
+The interface is a fork of Horizon's, with the same layout and the same screens so nobody has to relearn anything: Dashboard (throughput, backlog, workers, per-queue workload with pause, resume and purge), Monitoring (tags), Metrics (throughput, runtime and wait time charts by job or by queue over 1 hour, 24 hours or 7 days), Batches, Pending Jobs (pending and delayed), Running Jobs (running and stuck), Completed Jobs (with silenced, released, timed-out and lost attempts), Failed Jobs (search, retry, retry all, flush) and Workers.
 
 Every list refreshes itself (`refresh_seconds`), follows the system color scheme with a light/dark toggle, and can switch between observed connections. With `read_only` enabled, every action disappears from the interface and the API rejects it.
 
@@ -84,9 +84,14 @@ An execution whose outcome never arrives is marked **lost** instead of staying "
 | `storage.prefix` | `belvedere_` | Table prefix |
 | `sampling` | `1` | Record one job out of *n* (metrics stay exact for sampled jobs only) |
 | `snapshot.*` | enabled, 16 KB, common secret keys | Snapshot of the job's public properties |
+| `silenced` | `[]` | Job classes kept out of the Completed Jobs list, shown under a Silenced tab instead (still recorded and counted) |
 | `retention.*` | 7 days completed (released, timed-out and lost included), 30 days failed | Retention applied by `belvedere:prune` |
 | `workers.dead_after_seconds` | `90` | A worker without heartbeat for this long is reported dead |
-| `alerts.*` | mail / Slack routes, thresholds, cooldown | Alerts evaluated by `belvedere:check` |
+| `alerts.*` | mail / Slack routes, thresholds, cooldown | Alerts evaluated by `belvedere:check` (see below) |
+
+## Alerts
+
+`belvedere:check` sends a notification to the configured `alerts.routes` (mail, Slack) when a queue holds more than `queue_size` jobs, when the oldest job ready to run on a queue has waited longer than `wait_seconds` (`wait_seconds_per_queue` overrides it per `connection:queue`, `0` exempts a queue; paused queues are never reported), when the failure rate of a queue over `window_minutes` exceeds `failure_rate_percent` (once at least `failure_rate_minimum_jobs` were processed) and when a worker stops reporting. Each alert is sent once per `cooldown_minutes`.
 
 ## Queue pausing
 
@@ -106,7 +111,7 @@ A retry pushes the stored payload back with its attempts reset, exactly like `qu
 | --- | --- |
 | `belvedere:install` | Publish the configuration and the migration |
 | `belvedere:status` | Print every queue and the worker count in the console |
-| `belvedere:check` | Mark lost executions, then evaluate backlogs, failure rates and dead workers and send alerts |
+| `belvedere:check` | Mark lost executions, then evaluate backlogs, wait times, failure rates and dead workers and send alerts |
 | `belvedere:prune` | Apply the retention periods |
 | `belvedere:clear` | Delete everything Belvedere stored |
 
@@ -123,7 +128,7 @@ Every endpoint lives under `/belvedere/api` and accepts `?connection=` when seve
 | GET | `jobs/pending` · `delayed` · `running` · `stuck` | Live jobs from the `jobs` table |
 | DELETE | `jobs/{connection}/{id}` | Delete a pending job |
 | POST | `jobs/{connection}/{id}/run-now` · `/release` | Make a delayed job available now, release a stuck job |
-| GET | `jobs/history` · `jobs/history/{uuid}` | Processed jobs with filters, detail with every attempt |
+| GET | `jobs/history` · `jobs/history/{uuid}` | Processed jobs with filters (`status`, `queue`, `name`, `tag`, `search`, `from`, `to`, `silenced`), detail with every attempt |
 | GET | `jobs/failed` · `jobs/failed/{id}` | Failed jobs with filters, detail with the exception |
 | POST | `jobs/failed/{id}/retry` · `jobs/failed/retry` | Retry one job, a list of `ids` or the current filter |
 | DELETE | `jobs/failed/{id}` · `jobs/failed` | Forget one failed job or flush them all |

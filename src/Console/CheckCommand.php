@@ -13,7 +13,7 @@ final class CheckCommand extends Command
 {
     protected $signature = 'belvedere:check';
 
-    protected $description = 'Mark the executions whose outcome will never arrive as lost, then evaluate queue backlogs, failure rates and dead workers and send the configured alerts';
+    protected $description = 'Mark the executions whose outcome will never arrive as lost, then evaluate queue backlogs, wait times, failure rates and dead workers and send the configured alerts';
 
     public function handle(Reconciler $reconciler, AlertEvaluator $evaluator): int
     {

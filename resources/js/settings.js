@@ -6,4 +6,5 @@ export default Object.freeze({
     basePath: path === '' ? '' : `/${path}`,
     refreshSeconds: Math.max(1, Number(provided.refreshSeconds) || 5),
     readOnly: Boolean(provided.readOnly),
+    silenced: Boolean(provided.silenced),
 });

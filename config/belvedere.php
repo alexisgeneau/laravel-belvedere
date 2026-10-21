@@ -33,6 +33,11 @@ return [
         'hidden_keys' => ['password', 'token', 'secret', 'authorization', 'api_key'],
     ],
 
+    // Job classes kept out of the Completed Jobs list (still recorded, counted and shown under the Silenced tab).
+    'silenced' => [
+        // App\Jobs\RefreshSearchIndex::class,
+    ],
+
     'retention' => [
         'completed_hours' => 168,
         'failed_hours' => 720,
@@ -52,6 +57,10 @@ return [
             'slack' => env('BELVEDERE_ALERT_SLACK'),
         ],
         'queue_size' => 1000,
+        'wait_seconds' => 60,
+        'wait_seconds_per_queue' => [
+            // 'database:reports' => 900,
+        ],
         'failure_rate_percent' => 10,
         'failure_rate_minimum_jobs' => 20,
         'window_minutes' => 15,

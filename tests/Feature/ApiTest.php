@@ -119,6 +119,35 @@ it('performs actions through the api and refuses them in read-only mode', functi
     $this->getJson('/belvedere/api/queues')->assertOk();
 });
 
+it('keeps silenced job classes out of the completed list and serves them apart', function (): void {
+    $this->authorize();
+    config()->set('belvedere.silenced', [TaggedJob::class]);
+
+    TaggedJob::dispatch();
+    SucceedingJob::dispatch();
+    $this->workQueue();
+
+    $this->getJson('/belvedere/api/jobs/history?status=completed')
+        ->assertOk()
+        ->assertJsonCount(1, 'jobs')
+        ->assertJsonPath('jobs.0.name', SucceedingJob::class);
+
+    $this->getJson('/belvedere/api/jobs/history?status=completed&silenced=1')
+        ->assertOk()
+        ->assertJsonCount(1, 'jobs')
+        ->assertJsonPath('jobs.0.name', TaggedJob::class);
+
+    $this->getJson('/belvedere/api/jobs/history')->assertOk()->assertJsonCount(2, 'jobs');
+
+    $this->get('/belvedere')->assertOk()->assertSee('\u0022silenced\u0022:true', false);
+
+    config()->set('belvedere.silenced', []);
+
+    $this->getJson('/belvedere/api/jobs/history?status=completed')->assertOk()->assertJsonCount(2, 'jobs');
+    $this->getJson('/belvedere/api/jobs/history?status=completed&silenced=1')->assertOk()->assertJsonCount(0, 'jobs');
+    $this->get('/belvedere')->assertOk()->assertSee('\u0022silenced\u0022:false', false);
+});
+
 it('manages monitored tags and lists their jobs', function (): void {
     $this->authorize();
 

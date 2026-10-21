@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Belvedere\Http\Controllers;
 
+use Belvedere\Belvedere;
 use Belvedere\Support\Assets;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Foundation\Application;
@@ -26,6 +27,7 @@ final class DashboardController extends Controller
                 'path' => trim((string) $config->get('belvedere.path', 'belvedere'), '/'),
                 'refreshSeconds' => max(1, (int) $config->get('belvedere.refresh_seconds', 5)),
                 'readOnly' => (bool) $config->get('belvedere.read_only', false),
+                'silenced' => Belvedere::silencedJobs() !== [],
             ],
         ]);
     }

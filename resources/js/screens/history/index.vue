@@ -1,12 +1,16 @@
 <script>
     import listing from '../../mixins/listing';
 
+    import settings from '../../settings';
+
+    // "silenced" is not a status: it lists the completed jobs of the classes silenced in the configuration.
     const STATUSES = [
-        { value: 'completed', label: 'Completed', empty: "There aren't any completed jobs." },
-        { value: 'released', label: 'Released', empty: "There aren't any released jobs." },
-        { value: 'timed_out', label: 'Timed Out', empty: "There aren't any timed out jobs." },
-        { value: 'lost', label: 'Lost', empty: "There aren't any lost jobs: every worker reported the outcome of its jobs." },
-    ];
+        { value: 'completed', label: 'Completed', empty: "There aren't any completed jobs.", params: { status: 'completed' } },
+        { value: 'silenced', label: 'Silenced', empty: "There aren't any silenced jobs.", params: { status: 'completed', silenced: 1 }, enabled: settings.silenced },
+        { value: 'released', label: 'Released', empty: "There aren't any released jobs.", params: { status: 'released' } },
+        { value: 'timed_out', label: 'Timed Out', empty: "There aren't any timed out jobs.", params: { status: 'timed_out' } },
+        { value: 'lost', label: 'Lost', empty: "There aren't any lost jobs: every worker reported the outcome of its jobs.", params: { status: 'lost' } },
+    ].filter((status) => status.enabled ?? true);
 
     export default {
         mixins: [listing],
@@ -26,8 +30,12 @@
                 return STATUSES;
             },
 
+            current() {
+                return STATUSES.find((status) => status.value === this.status);
+            },
+
             emptyMessage() {
-                return this.search ? 'No job matches your search.' : STATUSES.find((status) => status.value === this.status).empty;
+                return this.search ? 'No job matches your search.' : this.current.empty;
             },
         },
 
@@ -52,7 +60,7 @@
         methods: {
             fetch(cursor) {
                 return this.$http.get('/jobs/history', {
-                    params: { status: this.status, search: this.search || undefined, cursor, limit: this.perPage },
+                    params: { ...this.current.params, search: this.search || undefined, cursor, limit: this.perPage },
                 }).then((response) => ({ items: response.data.jobs, nextCursor: response.data.next_cursor }));
             },
         },

@@ -114,6 +114,13 @@ test('completed jobs have their released, timed out and lost tabs', async ({ pag
     await expect(page.locator('.badge', { hasText: 'Completed' }).first()).toBeVisible();
 
     await visit(page, '/jobs/completed');
+    await expect(rows(page).first()).toBeVisible();
+    await expect(page.locator('tbody tr', { hasText: 'RenderThumbnail' })).toHaveCount(0);
+
+    await tab(page, 'Silenced').click();
+    await expect(rows(page).first()).toContainText('RenderThumbnail');
+    await expect(page.locator('tbody tr', { hasText: 'SendInvoice' })).toHaveCount(0);
+
     await tab(page, 'Released').click();
     await expect(rows(page).first()).toBeVisible();
 
