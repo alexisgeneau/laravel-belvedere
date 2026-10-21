@@ -1,0 +1,26 @@
+providers:
+  - Belvedere\BelvedereServiceProvider
+
+migrations:
+  - tests/database/migrations
+  - database/migrations
+
+seeders:
+  - Workbench\Database\Seeders\DatabaseSeeder
+
+env:
+  - APP_NAME=Workbench
+  - APP_ENV=local
+  - APP_DEBUG=true
+  - DB_CONNECTION=sqlite
+  - QUEUE_CONNECTION=database
+  - QUEUE_FAILED_DRIVER=database-uuids
+  - CACHE_STORE=file
+  - SESSION_DRIVER=file
+
+workbench:
+  start: '/belvedere'
+  install: false
+  build:
+    - create-sqlite-db
+    - migrate-fresh

@@ -1,0 +1,101 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pest:
+    name: PHP ${{ matrix.php }} · Laravel ${{ matrix.laravel }} · ${{ matrix.database }} · ${{ matrix.stability }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4']
+        laravel: ['11', '12', '13']
+        stability: ['prefer-lowest', 'prefer-stable']
+        database: ['sqlite']
+        include:
+          - laravel: '11'
+            testbench: '^9.0'
+          - laravel: '12'
+            testbench: '^10.0'
+          - laravel: '13'
+            testbench: '^11.0'
+          - php: '8.3'
+            laravel: '13'
+            testbench: '^11.0'
+            stability: 'prefer-stable'
+            database: 'mysql'
+          - php: '8.3'
+            laravel: '13'
+            testbench: '^11.0'
+            stability: 'prefer-stable'
+            database: 'pgsql'
+        exclude:
+          - php: '8.2'
+            laravel: '13'
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: belvedere
+          MYSQL_ROOT_PASSWORD: secret
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping -h 127.0.0.1 -psecret" --health-interval=10s --health-timeout=5s --health-retries=5
+      pgsql:
+        image: postgres:16
+        env:
+          POSTGRES_DB: belvedere
+          POSTGRES_USER: belvedere
+          POSTGRES_PASSWORD: secret
+        ports:
+          - 5432:5432
+        options: --health-cmd="pg_isready -U belvedere" --health-interval=10s --health-timeout=5s --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, pdo, pdo_sqlite, pdo_mysql, pdo_pgsql
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          composer require "illuminate/contracts:^${{ matrix.laravel }}.0" "orchestra/testbench:${{ matrix.testbench }}" --no-interaction --no-update
+          composer update --${{ matrix.stability }} --prefer-dist --no-interaction
+
+      - name: Run tests
+        run: vendor/bin/pest --ci
+        env:
+          BELVEDERE_TEST_DB: ${{ matrix.database }}
+          BELVEDERE_TEST_DB_HOST: 127.0.0.1
+          BELVEDERE_TEST_DB_DATABASE: belvedere
+          BELVEDERE_TEST_DB_USERNAME: ${{ matrix.database == 'mysql' && 'root' || 'belvedere' }}
+          BELVEDERE_TEST_DB_PASSWORD: secret
+
+  static:
+    name: Static analysis
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction
+
+      - name: Pint
+        run: vendor/bin/pint --test
+
+      - name: PHPStan
+        run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G

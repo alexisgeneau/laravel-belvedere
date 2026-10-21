@@ -1,0 +1,247 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Belvedere\Collector;
+
+use Belvedere\Enums\JobStatus;
+use Belvedere\Models\Job;
+use Belvedere\Models\JobTag;
+use Belvedere\Support\Payload;
+use Belvedere\Support\WorkerIdentity;
+use Illuminate\Contracts\Queue\Job as QueuedJob;
+use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Queue\Events\JobQueued;
+use Illuminate\Support\Carbon;
+use JsonException;
+use Throwable;
+
+final class JobRecorder
+{
+    private const EXCEPTION_MAX_LENGTH = 200_000;
+
+    /** @var array<string, array{attempt: int, started: float, wait: int|null, name: string, queue: string}> */
+    private array $running = [];
+
+    /** @var array<string, string> */
+    private array $exceptions = [];
+
+    public function queued(JobQueued $event): void
+    {
+        try {
+            $payload = new Payload($event->payload());
+        } catch (JsonException) {
+            return;
+        }
+
+        $uuid = $payload->uuid();
+
+        if ($uuid === null) {
+            return;
+        }
+
+        try {
+            $job = Job::query()->create([
+                'uuid' => $uuid,
+                'attempt' => 1,
+                'connection' => $event->connectionName,
+                'queue' => $event->queue ?? $this->defaultQueue($event->connectionName),
+                'name' => $payload->displayName(),
+                'status' => JobStatus::Queued,
+                'tags' => $payload->tags(),
+                'snapshot' => $payload->snapshot(),
+                'batch_id' => $payload->batchId(),
+                'queued_at' => Carbon::now(),
+            ]);
+        } catch (UniqueConstraintViolationException) {
+            return;
+        }
+
+        $this->storeTags($job->id, $payload->tags());
+    }
+
+    public function processing(string $connection, QueuedJob $job): void
+    {
+        $uuid = $job->uuid();
+
+        if ($uuid === null) {
+            return;
+        }
+
+        $now = Carbon::now();
+        $latest = Job::query()->forUuid($uuid)->orderByDesc('attempt')->first();
+        $name = $job->resolveName();
+        $queue = $job->getQueue();
+
+        if ($latest !== null && $latest->status === JobStatus::Queued) {
+            $attempt = $latest->attempt;
+            $waitMs = $latest->queued_at !== null ? $this->millisecondsBetween($latest->queued_at, $now) : null;
+
+            $latest->forceFill([
+                'status' => JobStatus::Running,
+                'started_at' => $now,
+                'worker_id' => WorkerIdentity::id(),
+                'wait_ms' => $waitMs,
+            ])->save();
+        } else {
+            $payload = new Payload($job->payload());
+            $attempt = $latest !== null ? $latest->attempt + 1 : 1;
+            $queuedAt = $latest?->finished_at;
+            $waitMs = $queuedAt !== null ? $this->millisecondsBetween($queuedAt, $now) : null;
+            $tags = $payload->tags() ?: ($latest->tags ?? []);
+
+            $model = Job::query()->create([
+                'uuid' => $uuid,
+                'attempt' => $attempt,
+                'connection' => $connection,
+                'queue' => $queue,
+                'name' => $name,
+                'status' => JobStatus::Running,
+                'tags' => $tags,
+                'snapshot' => $payload->snapshot() ?? $latest?->snapshot,
+                'batch_id' => $payload->batchId() ?? $latest?->batch_id,
+                'worker_id' => WorkerIdentity::id(),
+                'queued_at' => $queuedAt,
+                'started_at' => $now,
+                'wait_ms' => $waitMs,
+            ]);
+
+            $this->storeTags($model->id, $tags);
+        }
+
+        $this->running[$uuid] = [
+            'attempt' => $attempt,
+            'started' => microtime(true),
+            'wait' => $waitMs,
+            'name' => $name,
+            'queue' => $queue,
+        ];
+    }
+
+    public function exceptionOccurred(QueuedJob $job, Throwable $exception): void
+    {
+        $uuid = $job->uuid();
+
+        if ($uuid !== null && isset($this->running[$uuid])) {
+            $this->exceptions[$uuid] = $this->summary($exception);
+        }
+    }
+
+    public function processed(string $connection, QueuedJob $job): ?Completion
+    {
+        if ($job->hasFailed()) {
+            return null;
+        }
+
+        return $this->finish($connection, $job, $job->isReleased() ? JobStatus::Released : JobStatus::Completed, null);
+    }
+
+    public function released(string $connection, QueuedJob $job): ?Completion
+    {
+        $uuid = $job->uuid();
+        $exception = $uuid !== null ? ($this->exceptions[$uuid] ?? null) : null;
+
+        return $this->finish($connection, $job, JobStatus::Released, $exception);
+    }
+
+    public function failed(string $connection, QueuedJob $job, Throwable $exception): ?Completion
+    {
+        return $this->finish($connection, $job, JobStatus::Failed, $this->describe($exception));
+    }
+
+    public function timedOut(string $connection, QueuedJob $job): ?Completion
+    {
+        return $this->finish($connection, $job, JobStatus::TimedOut, 'The job exceeded its timeout.');
+    }
+
+    private function finish(string $connection, QueuedJob $job, JobStatus $status, ?string $exception): ?Completion
+    {
+        $uuid = $job->uuid();
+
+        if ($uuid === null) {
+            return null;
+        }
+
+        $running = $this->running[$uuid] ?? null;
+        unset($this->running[$uuid], $this->exceptions[$uuid]);
+
+        $queue = $running['queue'] ?? $job->getQueue();
+        $name = $running['name'] ?? $job->resolveName();
+        $runMs = $running !== null ? (int) round((microtime(true) - $running['started']) * 1000) : null;
+        $now = Carbon::now();
+
+        $query = Job::query()->forUuid($uuid);
+
+        if ($running !== null) {
+            $query->where('attempt', $running['attempt']);
+        } else {
+            $query->orderByDesc('attempt')->limit(1);
+        }
+
+        if ($status === JobStatus::TimedOut) {
+            $query->where('status', JobStatus::Running->value);
+        }
+
+        $updated = $query->update([
+            'status' => $status->value,
+            'finished_at' => $now->format(Job::DATE_FORMAT),
+            'run_ms' => $runMs,
+            'memory_kb' => (int) (memory_get_usage(true) / 1024),
+            'exception' => $exception,
+        ]);
+
+        if ($updated === 0 && $status !== JobStatus::TimedOut) {
+            Job::query()->insertOrIgnore([
+                'uuid' => $uuid,
+                'attempt' => $running['attempt'] ?? 1,
+                'connection' => $connection,
+                'queue' => $queue,
+                'name' => $name,
+                'status' => $status->value,
+                'worker_id' => WorkerIdentity::id(),
+                'finished_at' => $now->format(Job::DATE_FORMAT),
+                'run_ms' => $runMs,
+                'exception' => $exception,
+            ]);
+        }
+
+        return new Completion($connection, $queue, $name, $status, $running['wait'] ?? null, $runMs);
+    }
+
+    /** @param  list<string>  $tags */
+    private function storeTags(int $jobId, array $tags): void
+    {
+        if ($tags === []) {
+            return;
+        }
+
+        JobTag::query()->insertOrIgnore(array_map(
+            static fn (string $tag): array => ['job_id' => $jobId, 'tag' => mb_substr($tag, 0, 191)],
+            $tags,
+        ));
+    }
+
+    private function defaultQueue(string $connection): string
+    {
+        return (string) config("queue.connections.{$connection}.queue", 'default');
+    }
+
+    private function millisecondsBetween(Carbon $from, Carbon $to): int
+    {
+        return max(0, (int) $from->diffInMilliseconds($to, false));
+    }
+
+    private function summary(Throwable $exception): string
+    {
+        return mb_substr($exception::class.': '.$exception->getMessage(), 0, 2000);
+    }
+
+    private function describe(Throwable $exception): string
+    {
+        return mb_substr(
+            $exception::class.': '.$exception->getMessage()."\n\n".$exception->getTraceAsString(),
+            0,
+            self::EXCEPTION_MAX_LENGTH,
+        );
+    }
+}
