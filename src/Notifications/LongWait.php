@@ -29,7 +29,7 @@ final class LongWait extends AlertNotification
         ];
 
         if ($this->poolMaximum !== null) {
-            $lines[] = "The supervisor pool of this queue is already at its maximum of {$this->poolMaximum} processes: the limit is the database, not the number of workers.";
+            $lines[] = "The supervisor pool of this queue is already running its maximum of {$this->poolMaximum} processes: the balancing can add no more without a higher maxProcesses.";
         }
 
         return $lines;

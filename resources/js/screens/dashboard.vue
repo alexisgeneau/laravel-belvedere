@@ -404,7 +404,7 @@
                         <td class="text-muted">{{ balancing(supervisor) }}</td>
                         <td class="text-muted">
                             {{ supervisor.min_processes }} to {{ supervisor.max_processes }}
-                            <small class="badge badge-warning badge-sm ms-1" title="Every process of this pool is running: more workers would not help, the limit is the database." v-if="supervisor.at_max && supervisor.status == 'running'">at max</small>
+                            <small class="badge badge-warning badge-sm ms-1" title="Every process of this pool is running: the balancing can add no more without a higher maxProcesses." v-if="supervisor.at_max && supervisor.status == 'running'">at max</small>
                         </td>
                         <td><status-badge :status="supervisor.status" /></td>
                         <td class="text-end table-fit" v-if="!readOnly && master.status != 'inactive'">

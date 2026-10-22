@@ -176,7 +176,7 @@ final readonly class AlertEvaluator
 
     /**
      * The maximum of the supervisor pool serving a queue, when every one of its
-     * processes is running: more workers would not help.
+     * processes is running: the balancing can add no more.
      *
      * @param  Collection<int, SupervisorState>  $pools
      */

@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The README gives the throughput of the `jobs` table by number of workers, measured on MySQL, MariaDB and PostgreSQL, in place of a rule of thumb for `maxProcesses`; the wait-time alert and the *at max* badge of the dashboard say that the balancing can add no more, instead of blaming the database.
+
 ## 0.2.1 - 2026-10-22
 
 - When every pool of a supervisor asks for one more process than it has, the last free slot goes to the queue with the most work; the pools that shrink are handled before the ones that grow.
