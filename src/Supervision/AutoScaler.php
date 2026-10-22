@@ -15,18 +15,22 @@ final readonly class AutoScaler
 {
     public function __construct(private QueueLoad $load) {}
 
+    /**
+     * The pools that shrink go first, then the ones that grow, the busiest first: when
+     * every pool rounds up to one more process than it has, the last free slot must
+     * go to the queue with the most work, not to the first pool in line.
+     */
     public function scale(Supervisor $supervisor): void
     {
         $pools = $supervisor->processPools->keyBy(static fn (ProcessPool $pool): string => $pool->queue());
 
-        $workers = $this->numberOfWorkersPerQueue($supervisor, $this->timeToClearPerQueue($supervisor, $pools));
+        $workers = $this->numberOfWorkersPerQueue($supervisor, $this->timeToClearPerQueue($supervisor, $pools))
+            ->filter(static fn (float $count, string $queue): bool => $pools->has($queue));
 
-        foreach ($workers as $queue => $count) {
-            $pool = $pools->get($queue);
+        [$growing, $shrinking] = $workers->partition(static fn (float $count, string $queue): bool => (int) ceil($count) > $pools[$queue]->totalProcessCount());
 
-            if ($pool !== null) {
-                $this->scalePool($supervisor, $pool, $count);
-            }
+        foreach ($shrinking->sort()->keys()->merge($growing->sortDesc()->keys()) as $queue) {
+            $this->scalePool($supervisor, $pools[$queue], $workers[$queue]);
         }
     }
 

@@ -2,6 +2,7 @@
 
 ## 0.2.1 - 2026-10-22
 
+- When every pool of a supervisor asks for one more process than it has, the last free slot goes to the queue with the most work; the pools that shrink are handled before the ones that grow.
 - An application updated to 0.2.0 without running the new migration keeps working as in 0.1.0: the dashboard, the API, the collector, `belvedere:check`, `belvedere:prune` and `belvedere:clear` leave the supervision aside while its tables are missing, and `php artisan belvedere` says to run `belvedere:install` and `migrate` instead of failing on a query.
 
 ## 0.2.0 - 2026-10-22

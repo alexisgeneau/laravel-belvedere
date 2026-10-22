@@ -57,6 +57,17 @@ it('shares the processes by the time needed to clear each queue', function (): v
     expect(poolSizes($supervisor))->toBe(['default' => 1, 'media' => 10]);
 });
 
+it('gives the only free slot to the busiest queue when every pool asks for more', function (): void {
+    // media needs about 55 s of work and default 35 s, for three processes at most: both pools
+    // round up to two, and the one slot left must go to media, not to the first pool in line.
+    $load = new FakeQueueLoad(['default' => 700, 'media' => 220], ['default' => 50.0, 'media' => 250.0]);
+    $supervisor = $this->supervisor(['queue' => 'default,media', 'balance' => 'auto', 'minProcesses' => 1, 'maxProcesses' => 3]);
+
+    scaleTimes($supervisor, $load, 5);
+
+    expect(poolSizes($supervisor))->toBe(['default' => 1, 'media' => 2]);
+});
+
 it('shares the processes by the number of jobs with the size strategy', function (): void {
     $load = new FakeQueueLoad(['default' => 100, 'media' => 10], ['default' => 100.0, 'media' => 10000.0]);
     $supervisor = $this->supervisor(['queue' => 'default,media', 'balance' => 'auto', 'autoScalingStrategy' => 'size', 'minProcesses' => 1, 'maxProcesses' => 11, 'balanceMaxShift' => 5]);
