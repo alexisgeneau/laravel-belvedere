@@ -39,13 +39,18 @@ final class PruneCommand extends Command
             ),
             'metrics' => $this->prune($storage->query('metrics'), 'bucket', $hours('metrics_hours', 168)),
             'actions' => $this->prune($storage->query('actions'), 'created_at', $hours('actions_hours', 720)),
-            // A worker, supervisor or master not seen for that long is gone, whatever status it last reported.
+            // A worker not seen for that long is gone, whatever status it last reported.
             'workers' => $this->prune($storage->query('workers'), 'last_seen_at', $hours('workers_hours', 24)),
-            'supervisors' => $this->prune($storage->query('supervisors'), 'last_seen_at', $hours('workers_hours', 24)),
-            'masters' => $this->prune($storage->query('masters'), 'last_seen_at', $hours('workers_hours', 24)),
-            // Orders for a supervisor that never came to read them.
-            'supervisor commands' => $this->prune($storage->query('commands'), 'created_at', 1),
         ];
+
+        if ($storage->hasSupervisionTables()) {
+            $deleted += [
+                'supervisors' => $this->prune($storage->query('supervisors'), 'last_seen_at', $hours('workers_hours', 24)),
+                'masters' => $this->prune($storage->query('masters'), 'last_seen_at', $hours('workers_hours', 24)),
+                // Orders for a supervisor that never came to read them.
+                'supervisor commands' => $this->prune($storage->query('commands'), 'created_at', 1),
+            ];
+        }
 
         foreach ($deleted as $label => $count) {
             $this->components->twoColumnDetail(ucfirst($label), (string) $count);

@@ -8,22 +8,23 @@ use Belvedere\Enums\JobStatus;
 use Belvedere\Models\Job;
 use Belvedere\Models\Worker;
 use Belvedere\Queues\JobActions;
+use Belvedere\Support\Storage;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 final class WorkersController extends Controller
 {
-    public function index(Request $request, Repository $config): JsonResponse
+    public function index(Request $request, Repository $config, Storage $storage): JsonResponse
     {
         $deadAfter = (int) $config->get('belvedere.workers.dead_after_seconds', 90);
         $supervisor = $this->optionalString($request, 'supervisor');
+        $supervised = $storage->hasSupervisionTables();
 
         $workers = Worker::query()
-            ->when($supervisor !== null, static fn ($query) => $query->where('supervisor', $supervisor))
+            ->when($supervised && $supervisor !== null, static fn ($query) => $query->where('supervisor', $supervisor))
             ->orderBy('hostname')
-            ->orderByRaw('case when supervisor is null then 1 else 0 end')
-            ->orderBy('supervisor')
+            ->when($supervised, static fn ($query) => $query->orderByRaw('case when supervisor is null then 1 else 0 end')->orderBy('supervisor'))
             ->orderBy('queues')
             ->orderBy('pid')
             ->get();

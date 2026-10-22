@@ -83,7 +83,26 @@ final class WorkerHeartbeat
         $this->startedAt ??= $now;
         $this->supervisor ??= self::supervisorFromName(null);
 
-        $columns = ['connection', 'queues', 'supervisor', 'status', 'jobs_processed', 'memory_kb', 'last_seen_at'];
+        $row = [
+            'id' => WorkerIdentity::id(),
+            'hostname' => WorkerIdentity::hostname(),
+            'pid' => WorkerIdentity::pid(),
+            'connection' => $event->connectionName,
+            'queues' => $event->queue,
+            'supervisor' => $this->supervisor,
+            'status' => $status->value,
+            'jobs_processed' => $this->processed,
+            'memory_kb' => (int) (memory_get_usage(true) / 1024),
+            'started_at' => $this->startedAt,
+            'last_seen_at' => $now,
+        ];
+
+        // An application updated to 0.2.0 without its migration has no supervisor column yet.
+        if (! $this->storage->hasSupervisionTables()) {
+            unset($row['supervisor']);
+        }
+
+        $columns = array_values(array_diff(array_keys($row), ['id', 'hostname', 'pid', 'started_at']));
 
         // The first beat of a process may land on the row of a previous one with the same id: a
         // restarted container keeps its hostname and runs the worker as pid 1 again. Start over.
@@ -91,23 +110,7 @@ final class WorkerHeartbeat
             $columns[] = 'started_at';
         }
 
-        $this->storage->query('workers')->upsert(
-            [[
-                'id' => WorkerIdentity::id(),
-                'hostname' => WorkerIdentity::hostname(),
-                'pid' => WorkerIdentity::pid(),
-                'connection' => $event->connectionName,
-                'queues' => $event->queue,
-                'supervisor' => $this->supervisor,
-                'status' => $status->value,
-                'jobs_processed' => $this->processed,
-                'memory_kb' => (int) (memory_get_usage(true) / 1024),
-                'started_at' => $this->startedAt,
-                'last_seen_at' => $now,
-            ]],
-            ['id'],
-            $columns,
-        );
+        $this->storage->query('workers')->upsert([$row], ['id'], $columns);
 
         $this->lastBeat = microtime(true);
         $this->lastStatus = $status;

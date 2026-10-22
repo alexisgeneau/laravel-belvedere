@@ -6,7 +6,7 @@ Horizon only works with Redis. Belvedere gives applications that run on the `dat
 
 ![Belvedere dashboard](art/dashboard.png)
 
-> **Status:** 0.2.0, complete and tested on MySQL, MariaDB, PostgreSQL and SQLite. Until 1.0, a minor version may still change a configuration key, an API response or a table; the changelog says so when it happens.
+> **Status:** 0.2.1, complete and tested on MySQL, MariaDB, PostgreSQL and SQLite. Until 1.0, a minor version may still change a configuration key, an API response or a table; the changelog says so when it happens.
 
 ## Requirements
 
@@ -48,7 +48,7 @@ Schedule::command('belvedere:check')->everyMinute();
 
 Then either keep starting your workers the way you do (`queue:work` under Supervisor, systemd or Docker: Belvedere observes them as they are) or let `php artisan belvedere` start and watch them for you, as described under [Supervisor](#supervisor).
 
-Upgrading from 0.1.0: run `php artisan belvedere:install` again (it publishes the migration 0.2.0 adds and leaves the rest alone), then `php artisan migrate`.
+Upgrading from 0.1.0: run `php artisan belvedere:install` again (it publishes the migration 0.2.0 adds and leaves the rest alone), then `php artisan migrate`. Until the migration has run, everything works as in 0.1.0 and the supervision stays off.
 
 ## Dashboard
 

@@ -6,6 +6,7 @@ namespace Belvedere\Supervision;
 
 use Belvedere\Supervision\Repositories\MasterRepository;
 use Belvedere\Supervision\Repositories\SupervisorRepository;
+use Belvedere\Support\Storage;
 use Illuminate\Support\Collection;
 
 /** What the masters say about the supervision, for the dashboard, the API and belvedere:status. */
@@ -23,10 +24,21 @@ final readonly class SupervisionStatus
     public function __construct(
         private MasterRepository $masters,
         private SupervisorRepository $supervisors,
+        private Storage $storage,
     ) {}
+
+    /** Whether the supervision tables exist: without them, nothing is supervised and nothing fails. */
+    public function available(): bool
+    {
+        return $this->storage->hasSupervisionTables();
+    }
 
     public function overall(): string
     {
+        if (! $this->available()) {
+            return self::NONE;
+        }
+
         $recent = $this->masters->recent();
 
         if ($recent->isEmpty()) {
@@ -49,6 +61,10 @@ final readonly class SupervisionStatus
      */
     public function masters(): Collection
     {
+        if (! $this->available()) {
+            return new Collection;
+        }
+
         $inactiveAfter = $this->masters->inactiveAfterSeconds();
         $supervisors = $this->supervisors->recent()->groupBy(static fn (SupervisorState $supervisor): string => $supervisor->master);
 
@@ -59,6 +75,10 @@ final readonly class SupervisionStatus
 
     public function totalProcesses(): int
     {
+        if (! $this->available()) {
+            return 0;
+        }
+
         return (int) $this->supervisors->all()->sum(static fn (SupervisorState $supervisor): int => $supervisor->totalProcesses());
     }
 

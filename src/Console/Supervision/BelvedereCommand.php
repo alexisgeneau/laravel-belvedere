@@ -12,6 +12,7 @@ use Belvedere\Supervision\Repositories\MasterRepository;
 use Belvedere\Supervision\SupervisionFactory;
 use Belvedere\Supervision\SupervisorOptions;
 use Belvedere\Supervision\SystemProcesses;
+use Belvedere\Support\Storage;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Config\Repository;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -23,10 +24,16 @@ final class BelvedereCommand extends Command
 
     protected $description = 'Start a master supervisor in the foreground: it starts, balances and restarts the queue workers of this machine';
 
-    public function handle(SupervisionFactory $factory, MasterRepository $masters, SystemProcesses $system, Repository $config): int
+    public function handle(SupervisionFactory $factory, MasterRepository $masters, SystemProcesses $system, Storage $storage, Repository $config): int
     {
         if (($unsupported = ProcessSignaller::unsupported()) !== null) {
             $this->components->error($unsupported);
+
+            return self::FAILURE;
+        }
+
+        if (! $storage->hasSupervisionTables()) {
+            $this->components->error('The supervisor tables are missing: run `php artisan belvedere:install`, then `php artisan migrate`.');
 
             return self::FAILURE;
         }

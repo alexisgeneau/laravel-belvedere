@@ -89,7 +89,7 @@ final readonly class AlertEvaluator
         }
 
         $alerts = [];
-        $pools = $this->supervisors->all();
+        $pools = $this->storage->hasSupervisionTables() ? $this->supervisors->all() : new Collection;
 
         foreach ($this->native->connections() as $connection) {
             foreach ($this->native->oldestWaits($connection) as $queue => $seconds) {
@@ -199,7 +199,7 @@ final readonly class AlertEvaluator
      */
     private function supervision(): array
     {
-        if (! $this->config->get('belvedere.alerts.supervisor', true)) {
+        if (! $this->config->get('belvedere.alerts.supervisor', true) || ! $this->storage->hasSupervisionTables()) {
             return [];
         }
 
