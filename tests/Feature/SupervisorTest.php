@@ -105,6 +105,8 @@ it('does not balance nor relaunch workers while paused', function (): void {
 });
 
 it('reports for its workers while they are paused, since a paused worker no longer loops', function (): void {
+    $this->freezeTime();
+
     $supervisor = $this->supervisor(['balance' => false, 'minProcesses' => 2, 'maxProcesses' => 2]);
     $supervisor->scale(2);
 
