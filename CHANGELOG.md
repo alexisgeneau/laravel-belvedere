@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 - 2026-10-22
+
+First release, tested on MySQL 8.4 and 9.7, MariaDB 11.8, PostgreSQL 17 and SQLite with Laravel 12 and 13.
 
 - Event collector storing one row per job execution, with tags and a redacted snapshot.
 - Live inspection of the `jobs`, `failed_jobs` and `job_batches` tables.

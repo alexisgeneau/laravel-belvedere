@@ -6,7 +6,7 @@ Horizon only works with Redis. Belvedere gives applications that run on the `dat
 
 ![Belvedere dashboard](art/dashboard.png)
 
-> **Status:** pre-release. The collector, storage, JSON API, commands, alerts and the dashboard are complete and tested; the package has not been tagged yet.
+> **Status:** 0.1.0, complete and tested on MySQL, MariaDB, PostgreSQL and SQLite. Until 1.0, a minor version may still change a configuration key, an API response or a table; the changelog says so when it happens.
 
 ## Requirements
 

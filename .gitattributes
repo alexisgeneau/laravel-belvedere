@@ -1,0 +1,17 @@
+# Keep the Composer archive to what an application needs. The dashboard sources
+# (resources/js, resources/sass) stay in: the build in resources/dist comes from them.
+/.github            export-ignore
+/art                export-ignore
+/tests              export-ignore
+/workbench          export-ignore
+/.gitattributes     export-ignore
+/.gitignore         export-ignore
+/CONTRIBUTING.md    export-ignore
+/package.json       export-ignore
+/package-lock.json  export-ignore
+/phpstan.neon       export-ignore
+/phpunit.xml        export-ignore
+/pint.json          export-ignore
+/playwright.config.js export-ignore
+/testbench.yaml     export-ignore
+/vite.config.js     export-ignore
