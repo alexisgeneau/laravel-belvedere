@@ -185,4 +185,4 @@ then open `http://127.0.0.1:8000/belvedere`.
 
 ## License
 
-MIT. The user interface is derived from [Laravel Horizon](https://github.com/laravel/horizon), also published under the MIT license; see `LICENSE.md`.
+MIT. The user interface is derived from [Laravel Horizon](https://github.com/laravel/horizon), also published under the MIT license; see `NOTICE.md`.
