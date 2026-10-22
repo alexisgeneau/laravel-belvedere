@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Belvedere\Console;
 
 use Belvedere\Enums\JobStatus;
-use Belvedere\Enums\WorkerStatus;
 use Belvedere\Support\Storage;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Config\Repository;
@@ -40,11 +39,8 @@ final class PruneCommand extends Command
             ),
             'metrics' => $this->prune($storage->query('metrics'), 'bucket', $hours('metrics_hours', 168)),
             'actions' => $this->prune($storage->query('actions'), 'created_at', $hours('actions_hours', 720)),
-            'workers' => $this->prune(
-                $storage->query('workers')->where('status', WorkerStatus::Stopped->value),
-                'last_seen_at',
-                $hours('workers_hours', 24),
-            ),
+            // A worker not seen for that long is gone, whatever status it last reported.
+            'workers' => $this->prune($storage->query('workers'), 'last_seen_at', $hours('workers_hours', 24)),
         ];
 
         foreach ($deleted as $label => $count) {
@@ -66,8 +62,13 @@ final class PruneCommand extends Command
                 break;
             }
 
-            $storage->query('job_tags')->whereIn('job_id', $ids)->delete();
-            $total += $storage->query('jobs')->whereIn('id', $ids)->delete();
+            // One transaction per chunk: the tags go with their executions, and the chunk costs
+            // a single commit (on SQLite, every autocommit statement is a sync to disk).
+            $total += (int) $storage->connection()->transaction(function () use ($storage, $ids): int {
+                $storage->query('job_tags')->whereIn('job_id', $ids)->delete();
+
+                return $storage->query('jobs')->whereIn('id', $ids)->delete();
+            });
         } while (count($ids) === self::CHUNK);
 
         return $total;

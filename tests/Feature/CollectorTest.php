@@ -16,7 +16,14 @@ use Belvedere\Tests\Fixtures\Jobs\SelfFailingJob;
 use Belvedere\Tests\Fixtures\Jobs\SucceedingJob;
 use Belvedere\Tests\Fixtures\Jobs\TaggedJob;
 use Belvedere\Tests\Fixtures\Product;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Exceptions;
+use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+use Ramsey\Uuid\Uuid;
+use Ramsey\Uuid\UuidInterface;
 
 it('records a queued job with its tags and snapshot', function (): void {
     $product = Product::query()->create(['name' => 'Lamp']);
@@ -98,6 +105,59 @@ it('redacts secrets in snapshots', function (): void {
         'apiToken' => Redactor::PLACEHOLDER,
         'email' => 'jane@example.com',
     ]);
+});
+
+it('never lets a recording failure reach the worker', function (): void {
+    Exceptions::fake();
+
+    SucceedingJob::dispatch();
+    Schema::drop('belvedere_job_tags');
+    Schema::drop('belvedere_jobs');
+
+    TaggedJob::dispatch();
+
+    $this->workQueue();
+
+    expect(DB::table('jobs')->count())->toBe(0)
+        ->and(DB::table('failed_jobs')->count())->toBe(0);
+
+    Exceptions::assertReported(QueryException::class);
+});
+
+it('ignores a duplicated uuid without breaking the transaction of the application', function (): void {
+    Str::createUuidsUsing(static fn (): UuidInterface => Uuid::fromString('11111111-1111-4111-8111-111111111111'));
+
+    try {
+        DB::transaction(function (): void {
+            TaggedJob::dispatch();
+            TaggedJob::dispatch();
+
+            // On PostgreSQL, a constraint violation outside a savepoint would abort the transaction here.
+            expect(Job::query()->count())->toBe(1);
+        });
+    } finally {
+        Str::createUuidsNormally();
+    }
+
+    expect(Job::query()->count())->toBe(1)
+        ->and(JobTag::query()->count())->toBe(2)
+        ->and(DB::table('jobs')->count())->toBe(2);
+});
+
+it('leaves raw payloads without a real uuid alone and lets them run', function (): void {
+    Queue::connection('database')->pushRaw(json_encode([
+        'uuid' => 'not-a-uuid',
+        'displayName' => 'raw',
+        'job' => 'Illuminate\\Queue\\CallQueuedHandler@call',
+        'maxTries' => null,
+        'data' => ['commandName' => SucceedingJob::class, 'command' => serialize(new SucceedingJob)],
+    ]));
+
+    $this->workQueue();
+
+    expect(Job::query()->count())->toBe(0)
+        ->and(DB::table('jobs')->count())->toBe(0)
+        ->and(DB::table('failed_jobs')->count())->toBe(0);
 });
 
 it('aggregates per-minute metrics by queue and by job class', function (): void {

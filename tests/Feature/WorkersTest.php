@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Belvedere\Collector\QueueEventSubscriber;
+use Belvedere\Collector\WorkerHeartbeat;
 use Belvedere\Enums\WorkerStatus;
 use Belvedere\Models\Worker;
 use Belvedere\Queues\JobActions;
@@ -49,4 +51,30 @@ it('reports a worker dead once its heartbeat is too old', function (): void {
         ->and(Worker::query()->dead(90)->count())->toBe(1)
         ->and(app(JobActions::class)->forgetWorker($worker->id))->toBeTrue()
         ->and(Worker::query()->count())->toBe(0);
+});
+
+it('starts over when a new process inherits the id of a previous worker', function (): void {
+    // A restarted container keeps its hostname and runs the worker as pid 1 again: same id, new process.
+    $this->freezeTime();
+
+    app(WorkerHeartbeat::class)->jobProcessed();
+    Event::until(new Looping('database', 'default'));
+
+    $previous = Worker::query()->sole();
+
+    expect($previous->jobs_processed)->toBe(1);
+
+    $this->travel(5)->minutes();
+    $this->app->forgetInstance(WorkerHeartbeat::class);
+    $this->app->forgetInstance(QueueEventSubscriber::class);
+
+    Event::until(new Looping('database', 'high'));
+
+    $worker = Worker::query()->sole();
+
+    expect($worker->id)->toBe($previous->id)
+        ->and($worker->started_at->toIso8601String())->toBe(now()->toIso8601String())
+        ->and($worker->started_at->greaterThan($previous->started_at))->toBeTrue()
+        ->and($worker->jobs_processed)->toBe(0)
+        ->and($worker->queues)->toBe('high');
 });

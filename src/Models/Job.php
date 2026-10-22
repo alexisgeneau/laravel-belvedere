@@ -7,6 +7,7 @@ namespace Belvedere\Models;
 use Belvedere\Enums\JobStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Query\JoinClause;
 
 /**
  * @property int $id
@@ -74,7 +75,18 @@ final class Job extends Model
      */
     public function scopeWithTag(Builder $query, string $tag): Builder
     {
-        return $query->whereIn('id', JobTag::query()->select('job_id')->where('tag', $tag));
+        // Driven by the tag index and ordered along it, so the database stops after one page whether
+        // the tag is on three executions or on half of them. With an IN subquery ordered by
+        // finished_at, SQLite scanned the whole history for a rare tag (120 ms per million rows).
+        $jobs = $this->getTable();
+        $tags = (new JobTag)->getTable();
+
+        return $query
+            ->join($tags, static function (JoinClause $join) use ($jobs, $tags, $tag): void {
+                $join->on("{$tags}.job_id", '=', "{$jobs}.id")->where("{$tags}.tag", '=', $tag);
+            })
+            ->select("{$jobs}.*", "{$tags}.job_id")
+            ->orderByDesc("{$tags}.job_id");
     }
 
     /**

@@ -10,7 +10,7 @@ Open an issue with the Laravel and PHP versions, the database driver, the queue 
 
 1. Fork the repository and create a branch from `master`.
 2. Install the dependencies: `composer install`, and `npm install` if you touch the front end.
-3. Make the change, with tests for any new behaviour. The suite runs against SQLite by default; `BELVEDERE_TEST_DB=mysql` or `pgsql` (with `BELVEDERE_TEST_DB_HOST`, `_DATABASE`, `_USERNAME`, `_PASSWORD`) runs it against a real server, which is what the CI does on MySQL 8.4 and 9.7, MariaDB 11.8 and PostgreSQL 17.
+3. Make the change, with tests for any new behaviour. The suite runs against SQLite by default; `BELVEDERE_TEST_DB=mysql` or `pgsql` (with `BELVEDERE_TEST_DB_HOST`, `_PORT`, `_DATABASE`, `_USERNAME`, `_PASSWORD`) runs it against a real server, which is what the CI does on MySQL 8.4 and 9.7, MariaDB 11.8 and PostgreSQL 17.
 4. Make sure everything is green before opening the pull request:
 
 ```bash
@@ -26,5 +26,6 @@ Keep pull requests focused: one change, its tests and, when it affects users, a 
 ## Design rules
 
 - Belvedere never unserializes job payloads in the web process; everything shown comes from the JSON payload or from the snapshot recorded at dispatch.
+- The collector never throws into the worker or the dispatcher: a recording failure is reported and swallowed, the application's jobs come first.
 - Laravel's `jobs`, `failed_jobs` and `job_batches` tables are read, never altered, except through the actions a user triggers.
 - The interface keeps Horizon's layout and vocabulary on purpose, so that people who know Horizon are not lost.

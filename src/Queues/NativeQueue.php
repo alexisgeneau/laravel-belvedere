@@ -11,6 +11,7 @@ use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 
 final readonly class NativeQueue
@@ -220,7 +221,9 @@ final readonly class NativeQueue
                 $lastId = (int) $row->id;
 
                 if (preg_match('/"uuid"\s*:\s*"([^"]{1,64})"/', (string) $row->payload_head, $matches) === 1) {
-                    $uuids[$matches[1]] = true;
+                    if (Str::isUuid($matches[1])) {
+                        $uuids[$matches[1]] = true;
+                    }
                 } else {
                     $unparsed[] = $lastId;
                 }

@@ -119,6 +119,25 @@ it('performs actions through the api and refuses them in read-only mode', functi
     $this->getJson('/belvedere/api/queues')->assertOk();
 });
 
+it('searches the history by job name or by uuid without choking on other terms', function (): void {
+    $this->authorize();
+
+    TaggedJob::dispatch();
+    SucceedingJob::dispatch();
+    $this->workQueue();
+
+    $uuid = (string) Job::query()->where('name', TaggedJob::class)->value('uuid');
+
+    $this->getJson('/belvedere/api/jobs/history?search=TaggedJob')->assertOk()->assertJsonCount(1, 'jobs')->assertJsonPath('jobs.0.name', TaggedJob::class);
+    $this->getJson("/belvedere/api/jobs/history?search={$uuid}")->assertOk()->assertJsonCount(1, 'jobs')->assertJsonPath('jobs.0.uuid', $uuid);
+    $this->getJson('/belvedere/api/jobs/history?search=not-a-uuid-nor-a-name')->assertOk()->assertJsonCount(0, 'jobs');
+    $this->getJson('/belvedere/api/jobs/history?search=%27%22%25_')->assertOk()->assertJsonCount(0, 'jobs');
+
+    $this->getJson("/belvedere/api/jobs/history/{$uuid}")->assertOk()->assertJsonPath('job.name', TaggedJob::class);
+    $this->getJson('/belvedere/api/jobs/history/not-a-uuid')->assertNotFound();
+    $this->getJson('/belvedere/api/jobs/history/12345678-1234-1234-1234-123456789abc')->assertNotFound();
+});
+
 it('keeps silenced job classes out of the completed list and serves them apart', function (): void {
     $this->authorize();
     config()->set('belvedere.silenced', [TaggedJob::class]);
@@ -146,6 +165,28 @@ it('keeps silenced job classes out of the completed list and serves them apart',
     $this->getJson('/belvedere/api/jobs/history?status=completed')->assertOk()->assertJsonCount(2, 'jobs');
     $this->getJson('/belvedere/api/jobs/history?status=completed&silenced=1')->assertOk()->assertJsonCount(0, 'jobs');
     $this->get('/belvedere')->assertOk()->assertSee('\u0022silenced\u0022:false', false);
+});
+
+it('pages through the executions of a tag along the tag index', function (): void {
+    $this->authorize();
+
+    TaggedJob::dispatch();
+    TaggedJob::dispatch();
+    TaggedJob::dispatch();
+    SucceedingJob::dispatch();
+
+    $this->workQueue();
+
+    $expected = Job::query()->where('name', TaggedJob::class)->orderByDesc('id')->pluck('id')->all();
+
+    foreach (['/belvedere/api/jobs/history?tag=reports', '/belvedere/api/monitoring/reports/jobs?'] as $url) {
+        $first = $this->getJson($url.'&limit=2')->assertOk()->assertJsonCount(2, 'jobs')->json();
+        $second = $this->getJson($url.'&limit=2&cursor='.$first['next_cursor'])->assertOk()->assertJsonCount(1, 'jobs')->json();
+
+        expect(array_merge(array_column($first['jobs'], 'id'), array_column($second['jobs'], 'id')))->toBe($expected)
+            ->and($second['next_cursor'])->toBeNull()
+            ->and($first['jobs'][0])->not->toHaveKey('job_id');
+    }
 });
 
 it('manages monitored tags and lists their jobs', function (): void {

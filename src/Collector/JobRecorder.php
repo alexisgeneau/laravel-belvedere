@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Queue\Events\JobQueued;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 use JsonException;
 use Throwable;
 
@@ -41,29 +42,40 @@ final class JobRecorder
             return;
         }
 
+        $tags = $payload->tags();
+        $attributes = [
+            'uuid' => $uuid,
+            'attempt' => 1,
+            'connection' => $event->connectionName,
+            'queue' => $event->queue ?? $this->defaultQueue($event->connectionName),
+            'name' => $payload->displayName(),
+            'status' => JobStatus::Queued,
+            'tags' => $tags,
+            'snapshot' => $payload->snapshot(),
+            'batch_id' => $payload->batchId(),
+            'queued_at' => $payload->queuedAt() ?? Carbon::now(),
+        ];
+
         try {
-            $job = Job::query()->create([
-                'uuid' => $uuid,
-                'attempt' => 1,
-                'connection' => $event->connectionName,
-                'queue' => $event->queue ?? $this->defaultQueue($event->connectionName),
-                'name' => $payload->displayName(),
-                'status' => JobStatus::Queued,
-                'tags' => $payload->tags(),
-                'snapshot' => $payload->snapshot(),
-                'batch_id' => $payload->batchId(),
-                'queued_at' => $payload->queuedAt() ?? Carbon::now(),
-            ]);
+            if ($tags === []) {
+                Job::query()->create($attributes);
+
+                return;
+            }
+
+            // One commit for the execution and its tags. Inside a transaction of the application
+            // this is a savepoint, so a duplicate uuid never aborts that transaction on PostgreSQL.
+            Job::query()->getConnection()->transaction(function () use ($attributes, $tags): void {
+                $this->storeTags(Job::query()->create($attributes)->id, $tags);
+            });
         } catch (UniqueConstraintViolationException) {
             return;
         }
-
-        $this->storeTags($job->id, $payload->tags());
     }
 
     public function processing(string $connection, QueuedJob $job): void
     {
-        $uuid = $job->uuid();
+        $uuid = self::uuidOf($job);
 
         if ($uuid === null) {
             return;
@@ -88,7 +100,7 @@ final class JobRecorder
 
     public function exceptionOccurred(QueuedJob $job, Throwable $exception): void
     {
-        $uuid = $job->uuid();
+        $uuid = self::uuidOf($job);
 
         if ($uuid !== null && isset($this->running[$uuid])) {
             $this->exceptions[$uuid] = $this->summary($exception);
@@ -106,7 +118,7 @@ final class JobRecorder
 
     public function released(string $connection, QueuedJob $job): ?Completion
     {
-        $uuid = $job->uuid();
+        $uuid = self::uuidOf($job);
         $exception = $uuid !== null ? ($this->exceptions[$uuid] ?? null) : null;
 
         return $this->finish($connection, $job, JobStatus::Released, $exception);
@@ -124,7 +136,7 @@ final class JobRecorder
 
     private function finish(string $connection, QueuedJob $job, JobStatus $status, ?string $exception): ?Completion
     {
-        $uuid = $job->uuid();
+        $uuid = self::uuidOf($job);
 
         if ($uuid === null) {
             return null;
@@ -192,7 +204,7 @@ final class JobRecorder
 
     private function startNextAttempt(string $connection, QueuedJob $job, Payload $payload, Carbon $now): ?int
     {
-        $uuid = (string) $job->uuid();
+        $uuid = (string) self::uuidOf($job);
         $latest = Job::query()->forUuid($uuid)->orderByDesc('attempt')->first();
 
         if ($latest !== null && ($latest->status === JobStatus::Queued || ($latest->status === JobStatus::Lost && $latest->started_at === null))) {
@@ -246,6 +258,14 @@ final class JobRecorder
             static fn (string $tag): array => ['job_id' => $jobId, 'tag' => mb_substr($tag, 0, 191)],
             $tags,
         ));
+    }
+
+    /** The job uuid, or null when the payload carries none or one PostgreSQL's uuid column would reject. */
+    private static function uuidOf(QueuedJob $job): ?string
+    {
+        $uuid = $job->uuid();
+
+        return $uuid !== null && Str::isUuid($uuid) ? $uuid : null;
     }
 
     private function defaultQueue(string $connection): string

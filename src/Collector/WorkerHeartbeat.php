@@ -62,6 +62,14 @@ final class WorkerHeartbeat
         $now = Carbon::now();
         $this->startedAt ??= $now;
 
+        $columns = ['connection', 'queues', 'status', 'jobs_processed', 'memory_kb', 'last_seen_at'];
+
+        // The first beat of a process may land on the row of a previous one with the same id: a
+        // restarted container keeps its hostname and runs the worker as pid 1 again. Start over.
+        if ($this->lastBeat === null) {
+            $columns[] = 'started_at';
+        }
+
         $this->storage->query('workers')->upsert(
             [[
                 'id' => WorkerIdentity::id(),
@@ -76,7 +84,7 @@ final class WorkerHeartbeat
                 'last_seen_at' => $now,
             ]],
             ['id'],
-            ['connection', 'queues', 'status', 'jobs_processed', 'memory_kb', 'last_seen_at'],
+            $columns,
         );
 
         $this->lastBeat = microtime(true);

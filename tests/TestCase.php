@@ -87,7 +87,7 @@ abstract class TestCase extends Orchestra
             'mysql' => [
                 'driver' => 'mysql',
                 'host' => getenv('BELVEDERE_TEST_DB_HOST') ?: '127.0.0.1',
-                'port' => 3306,
+                'port' => (int) (getenv('BELVEDERE_TEST_DB_PORT') ?: 3306),
                 'database' => getenv('BELVEDERE_TEST_DB_DATABASE') ?: 'belvedere',
                 'username' => getenv('BELVEDERE_TEST_DB_USERNAME') ?: 'root',
                 'password' => getenv('BELVEDERE_TEST_DB_PASSWORD') ?: '',
@@ -99,7 +99,7 @@ abstract class TestCase extends Orchestra
             'pgsql' => [
                 'driver' => 'pgsql',
                 'host' => getenv('BELVEDERE_TEST_DB_HOST') ?: '127.0.0.1',
-                'port' => 5432,
+                'port' => (int) (getenv('BELVEDERE_TEST_DB_PORT') ?: 5432),
                 'database' => getenv('BELVEDERE_TEST_DB_DATABASE') ?: 'belvedere',
                 'username' => getenv('BELVEDERE_TEST_DB_USERNAME') ?: 'belvedere',
                 'password' => getenv('BELVEDERE_TEST_DB_PASSWORD') ?: '',

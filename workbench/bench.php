@@ -40,6 +40,12 @@ require dirname(__DIR__).'/vendor/autoload.php';
 $app = require dirname(__DIR__).'/vendor/orchestra/testbench-core/laravel/bootstrap/app.php';
 $app->make(ConsoleKernel::class)->bootstrap();
 
+// The API requests go through the web middleware, which needs an encryption key; a fresh
+// checkout has no .env in the skeleton, so provide one for the duration of the run.
+if (blank(config('app.key'))) {
+    config(['app.key' => 'base64:'.base64_encode(random_bytes(32))]);
+}
+
 if (($driver = getenv('BENCH_DB_CONNECTION')) !== false && $driver !== '') {
     config([
         'database.connections.bench' => [
@@ -62,7 +68,17 @@ if (($driver = getenv('BENCH_DB_CONNECTION')) !== false && $driver !== '') {
 
     DB::purge('bench');
 } else {
-    touch(config('database.connections.sqlite.database'));
+    // A fresh file for every run: the figures must not depend on what a previous run left behind.
+    $path = (string) config('database.connections.sqlite.database');
+
+    if ($path !== ':memory:') {
+        foreach (['', '-journal', '-wal', '-shm'] as $suffix) {
+            @unlink($path.$suffix);
+        }
+
+        touch($path);
+        DB::purge();
+    }
 }
 
 $out = static fn (string $line = ''): int => fwrite(STDOUT, $line.PHP_EOL);
@@ -91,7 +107,14 @@ $belvedereTables->up();
 
 $mode = $baseline ? 'baseline (collector disabled)' : 'belvedere';
 $driver = DB::connection()->getDriverName();
-$out("Belvedere bench — {$mode} — {$driver} — PHP ".PHP_VERSION);
+$server = $driver.' '.DB::connection()->getServerVersion();
+
+if ($driver === 'sqlite') {
+    $pragma = static fn (string $name): string => (string) DB::connection()->selectOne("pragma {$name}")->{$name};
+    $server .= sprintf(' (journal_mode=%s, synchronous=%s, secure_delete=%s)', $pragma('journal_mode'), $pragma('synchronous'), $pragma('secure_delete'));
+}
+
+$out("Belvedere bench — {$mode} — {$server} — PHP ".PHP_VERSION);
 $out();
 
 // Overhead per job: dispatch latency and worker throughput.
@@ -132,7 +155,7 @@ if (! $baseline && is_file($app->storagePath('bench-baseline.json'))) {
     $reference = json_decode((string) file_get_contents($app->storagePath('bench-baseline.json')), true);
 
     $out(sprintf(
-        '  versus baseline dispatch +%.2f ms (p50)   processing +%.2f ms/job   +%.2f queries/job',
+        '  versus baseline dispatch %+.2f ms (p50)   processing %+.2f ms/job   %+.2f queries/job',
         $results['dispatch_p50_ms'] - $reference['dispatch_p50_ms'],
         $results['processing_ms_per_job'] - $reference['processing_ms_per_job'],
         ($results['dispatch_queries_per_job'] + $results['processing_queries_per_job']) - ($reference['dispatch_queries_per_job'] + $reference['processing_queries_per_job']),
@@ -186,7 +209,7 @@ while ($inserted < $rows) {
             'queue' => $queues[$id % 5],
             'name' => $names[$id % 8],
             'status' => $status,
-            'tags' => $id % 10 === 0 ? json_encode(['tenant:'.($id % 100), 'order:'.$id]) : null,
+            'tags' => $id % 10 === 0 ? json_encode(['tenant:'.(intdiv($id, 10) % 100), 'order:'.$id]) : null,
             'snapshot' => json_encode(['orderId' => $id, 'reference' => 'ORD-'.$id]),
             'exception' => $status === 'failed' ? "RuntimeException: boom\n#0 /app/app/Jobs/Job.php(12): handle()" : null,
             'batch_id' => null,
@@ -200,7 +223,8 @@ while ($inserted < $rows) {
         ];
 
         if ($id % 10 === 0) {
-            $tagChunk[] = ['job_id' => $id, 'tag' => 'tenant:'.($id % 100)];
+            // One job in ten is tagged, spread over a hundred tenants: a tenant tag matches 0.1 % of the history.
+            $tagChunk[] = ['job_id' => $id, 'tag' => 'tenant:'.(intdiv($id, 10) % 100)];
             $tagChunk[] = ['job_id' => $id, 'tag' => 'order:'.$id];
             $sampleUuid ??= $rowUuid;
         }
@@ -264,6 +288,18 @@ for ($i = 0; $i < 4; $i++) {
 }
 
 $out(sprintf('  seeded in %.1f s', (hrtime(true) - $start) / 1e9));
+
+// The statistics a production server gathers by itself over time (autovacuum, InnoDB persistent
+// statistics); right after a bulk load the planner would otherwise work from stale estimates.
+// SQLite keeps none unless an application runs ANALYZE, so it is measured as it runs.
+$tables = ['belvedere_jobs', 'belvedere_job_tags', 'belvedere_metrics', 'belvedere_workers', 'belvedere_monitored_tags', 'jobs', 'failed_jobs', 'job_batches'];
+
+match (DB::connection()->getDriverName()) {
+    'pgsql' => DB::statement('ANALYZE'),
+    'mysql', 'mariadb' => DB::select('ANALYZE TABLE '.implode(', ', $tables)),
+    default => null,
+};
+
 $out();
 
 Belvedere::auth(static fn (): bool => true);

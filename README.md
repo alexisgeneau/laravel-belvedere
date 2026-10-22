@@ -63,7 +63,24 @@ Belvedere listens to the queue events Laravel already dispatches (`JobQueued`, `
 
 Tags follow Horizon's convention: a `tags()` method on the job, otherwise the Eloquent models found in its public properties. Tags, the batch id and a redacted snapshot of the job's public properties are computed when Laravel builds the payload (`Queue::createPayloadUsing`) and stored under its `belvedere` key, so they travel with the job through bulk pushes, batches and `queue:retry`. Jobs implementing `ShouldBeEncrypted` get tags but no snapshot. Payloads are never unserialized in the web process.
 
-Cost per job: one `INSERT` when the job is queued (plus one for its tags), one `UPDATE` when it starts and one when it finishes. Metrics are accumulated in memory by each worker and flushed at most every 5 seconds, so a worker killed with `SIGKILL` loses at most a few seconds of them. Use `sampling`, disable snapshots or point `storage.connection` to a dedicated database to lower the cost further.
+A failure to record (database down, lock timeout, deadlock) is reported through the application's exception handler and never reaches the worker: the job runs and finishes as if Belvedere were not there, and the execution is later marked lost if its outcome was never stored.
+
+### Cost
+
+Each job costs four statements in three commits: one `INSERT` for the execution and one for its tags when the job is queued, in the same transaction, then one `UPDATE` when it starts and one when it finishes. Metrics are accumulated in memory by each worker and flushed at most every 5 seconds, so a worker killed with `SIGKILL` loses at most a few seconds of them; heartbeats are written every few seconds, not per job.
+
+`composer bench` measures the overhead against a run with the collector disabled. On a laptop running the servers in Docker, with 2,000 jobs and PHP 8.4:
+
+| | Dispatch (p50) | Processing, per job |
+| --- | --- | --- |
+| MySQL 8.4 | 0.7 ms → 2.1 ms | 2.8 ms → 4.7 ms |
+| MariaDB 11.8 | 0.2 ms → 0.7 ms | 1.1 ms → 1.8 ms |
+| PostgreSQL 17 | 0.2 ms → 0.8 ms | 1.4 ms → 2.8 ms |
+| SQLite 3.46 | 1.0 ms → 3.2 ms | 2.9 ms → 5.9 ms |
+
+Each statement costs about what a commit costs on the server: MySQL 8.4 syncs its binary log as well as its redo log on every commit, and SQLite syncs its journal and its file on every statement outside a transaction. Figures move by about a third from one run to the next. Use `sampling`, disable snapshots or point `storage.connection` to a dedicated database to lower the cost further. On SQLite, setting `journal_mode` to `wal` and `synchronous` to `normal` on the connection makes every statement several times cheaper, Laravel's own queue table included.
+
+With a million rows of history, every endpoint of the API answers in under 50 ms on the four databases (the slowest draws the 7-day metrics charts), and `belvedere:prune` deletes a million rows in 4 seconds on PostgreSQL and in about two minutes on MySQL, MariaDB and SQLite — in production it only ever has one day's worth to delete.
 
 ### Lost executions
 
@@ -164,7 +181,7 @@ composer serve
 
 then open `http://127.0.0.1:8000/belvedere`.
 
-`composer bench` measures the overhead per job against a run with the collector disabled, the latency of every read endpoint once the history holds a million rows, and the duration of `belvedere:prune`. It runs on SQLite by default; set `BENCH_DB_CONNECTION=mysql` or `pgsql` with `BENCH_DB_HOST`, `BENCH_DB_PORT`, `BENCH_DB_DATABASE`, `BENCH_DB_USERNAME` and `BENCH_DB_PASSWORD` to measure the database you run in production. The script drops and recreates the queue and Belvedere tables of that database.
+`composer bench` measures the overhead per job against a run with the collector disabled, the latency of every read endpoint once the history holds a million rows, and the duration of `belvedere:prune`. It runs on SQLite by default; set `BENCH_DB_CONNECTION=mysql` or `pgsql` with `BENCH_DB_HOST`, `BENCH_DB_PORT`, `BENCH_DB_DATABASE`, `BENCH_DB_USERNAME` and `BENCH_DB_PASSWORD` to measure the database you run in production. The script drops and recreates the queue and Belvedere tables of that database. `composer bench -- --skip-api` measures the overhead per job alone; `--jobs=` and `--rows=` change the sizes.
 
 ## License
 

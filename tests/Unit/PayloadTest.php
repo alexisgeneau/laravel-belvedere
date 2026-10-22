@@ -6,7 +6,7 @@ use Belvedere\Support\Payload;
 
 it('exposes the job identity from the payload', function (): void {
     $payload = Payload::fromJson(json_encode([
-        'uuid' => 'abc-123',
+        'uuid' => '0f5a1a5e-9f3e-4a2b-8c1d-2e3f4a5b6c7d',
         'displayName' => 'App\Jobs\Ship',
         'attempts' => 2,
         'maxTries' => 5,
@@ -15,12 +15,18 @@ it('exposes the job identity from the payload', function (): void {
         'data' => ['commandName' => 'App\Jobs\Ship', 'command' => 'O:1:"x":0:{}'],
     ]));
 
-    expect($payload->uuid())->toBe('abc-123')
+    expect($payload->uuid())->toBe('0f5a1a5e-9f3e-4a2b-8c1d-2e3f4a5b6c7d')
         ->and($payload->displayName())->toBe('App\Jobs\Ship')
         ->and($payload->attempts())->toBe(2)
         ->and($payload->maxTries())->toBe(5)
         ->and($payload->timeout())->toBe(30)
         ->and($payload->commandName())->toBe('App\Jobs\Ship');
+});
+
+it('ignores a uuid field that is not a uuid', function (): void {
+    expect(Payload::fromJson('{"uuid":"stuck","displayName":"Stuck"}')->uuid())->toBeNull()
+        ->and(Payload::fromJson('{"uuid":"","displayName":"Stuck"}')->uuid())->toBeNull()
+        ->and(Payload::fromJson('{"displayName":"Stuck"}')->uuid())->toBeNull();
 });
 
 it('resets attempts, drops the retry deadline and stamps the dispatch time when prepared for a retry', function (): void {

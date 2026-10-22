@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Belvedere\Support;
 
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 use JsonException;
 
 final readonly class Payload
@@ -28,11 +29,15 @@ final readonly class Payload
         }
     }
 
+    /**
+     * The job uuid Laravel wrote in the payload. A value that is not a uuid is
+     * ignored: PostgreSQL stores the column as a native uuid and would reject it.
+     */
     public function uuid(): ?string
     {
         $uuid = $this->data['uuid'] ?? null;
 
-        return is_string($uuid) && $uuid !== '' ? $uuid : null;
+        return is_string($uuid) && Str::isUuid($uuid) ? $uuid : null;
     }
 
     public function displayName(): string

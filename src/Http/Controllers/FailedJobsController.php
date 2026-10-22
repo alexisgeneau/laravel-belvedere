@@ -11,6 +11,7 @@ use Belvedere\Queues\JobActions;
 use Belvedere\Queues\NativeQueue;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 final class FailedJobsController extends Controller
 {
@@ -29,7 +30,7 @@ final class FailedJobsController extends Controller
 
         $attempts = Job::query()
             ->selectRaw('uuid, max(attempt) as attempts')
-            ->whereIn('uuid', $jobs->map(static fn (FailedJob $job): ?string => $job->uuid)->filter()->all())
+            ->whereIn('uuid', $jobs->map(static fn (FailedJob $job): ?string => $job->uuid)->filter(static fn (?string $uuid): bool => $uuid !== null && Str::isUuid($uuid))->all())
             ->groupBy('uuid')
             ->pluck('attempts', 'uuid');
 
@@ -47,7 +48,7 @@ final class FailedJobsController extends Controller
     {
         $job = $failed->find($id) ?? abort(404);
 
-        $attempts = $job->uuid !== null
+        $attempts = $job->uuid !== null && Str::isUuid($job->uuid)
             ? (int) Job::query()->forUuid($job->uuid)->max('attempt')
             : null;
 

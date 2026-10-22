@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 
 final class HistoryController extends Controller
 {
@@ -40,14 +41,15 @@ final class HistoryController extends Controller
             ->when($hideSilenced, fn (Builder $query): Builder => $query->whereNotIn('name', $silenced))
             ->when($queue !== null, fn (Builder $query): Builder => $query->where('queue', $queue))
             ->when($name !== null, fn (Builder $query): Builder => $query->where('name', $name))
-            ->when($tag !== null, fn (Builder $query): Builder => $query->withTag($tag))
+            // The tag scope sets its own order; the other lists come newest finished first.
+            ->when($tag !== null, fn (Builder $query): Builder => $query->withTag($tag), fn (Builder $query): Builder => $query->orderByDesc('finished_at')->orderByDesc('id'))
             ->when($search !== null, fn (Builder $query): Builder => $query->where(function (Builder $query) use ($search): void {
-                $query->where('uuid', $search)->orWhere('name', 'like', '%'.addcslashes($search, '%_\\').'%');
+                // The uuid column is a native uuid on PostgreSQL: only compare it with a uuid.
+                $query->when(Str::isUuid($search), fn (Builder $query): Builder => $query->where('uuid', $search))
+                    ->orWhere('name', 'like', '%'.addcslashes($search, '%_\\').'%');
             }))
             ->when($from !== null, fn (Builder $query): Builder => $query->where('finished_at', '>=', Carbon::parse($from)))
             ->when($to !== null, fn (Builder $query): Builder => $query->where('finished_at', '<=', Carbon::parse($to)))
-            ->orderByDesc('finished_at')
-            ->orderByDesc('id')
             ->cursorPaginate($this->limit($request));
 
         return new JsonResponse([
@@ -58,6 +60,8 @@ final class HistoryController extends Controller
 
     public function show(string $uuid): JsonResponse
     {
+        abort_unless(Str::isUuid($uuid), 404);
+
         $attempts = Job::query()->forUuid($uuid)->orderBy('attempt')->get();
 
         abort_if($attempts->isEmpty(), 404);

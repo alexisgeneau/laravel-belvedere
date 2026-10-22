@@ -54,7 +54,6 @@ final class MonitoringController extends Controller
     {
         $jobs = Job::query()
             ->withTag($tag)
-            ->orderByDesc('id')
             ->cursorPaginate($this->limit($request));
 
         return new JsonResponse([

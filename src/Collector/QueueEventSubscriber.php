@@ -16,7 +16,16 @@ use Illuminate\Queue\Events\JobTimedOut;
 use Illuminate\Queue\Events\Looping;
 use Illuminate\Queue\Events\QueueBusy;
 use Illuminate\Queue\Events\WorkerStopping;
+use Illuminate\Support\Str;
+use Throwable;
 
+/**
+ * Feeds the collector from Laravel's queue events.
+ *
+ * Every handler is guarded: a failure to record (database down, lock timeout,
+ * deadlock) is reported through the exception handler and never reaches the
+ * worker, which would otherwise release or fail the job it was processing.
+ */
 final readonly class QueueEventSubscriber
 {
     public function __construct(
@@ -46,92 +55,129 @@ final readonly class QueueEventSubscriber
 
     public function onQueued(JobQueued $event): void
     {
-        $uuid = $event->payload()['uuid'] ?? null;
+        $this->guard(function () use ($event): void {
+            $uuid = $event->payload()['uuid'] ?? null;
 
-        if (is_string($uuid) && $this->sampler->accepts($uuid)) {
-            $this->recorder->queued($event);
-        }
+            if (is_string($uuid) && Str::isUuid($uuid) && $this->sampler->accepts($uuid)) {
+                $this->recorder->queued($event);
+            }
+        });
     }
 
     public function onProcessing(JobProcessing $event): void
     {
-        if ($this->sampled($event->job)) {
-            $this->recorder->processing($event->connectionName, $event->job);
-        }
+        $this->guard(function () use ($event): void {
+            if ($this->sampled($event->job)) {
+                $this->recorder->processing($event->connectionName, $event->job);
+            }
+        });
     }
 
     public function onProcessed(JobProcessed $event): void
     {
-        $this->heartbeat->jobProcessed();
+        $this->guard(function () use ($event): void {
+            $this->heartbeat->jobProcessed();
 
-        if ($this->sampled($event->job)) {
-            $this->complete($this->recorder->processed($event->connectionName, $event->job));
-        }
+            if ($this->sampled($event->job)) {
+                $this->complete($this->recorder->processed($event->connectionName, $event->job));
+            }
+        });
     }
 
     public function onExceptionOccurred(JobExceptionOccurred $event): void
     {
-        if ($this->sampled($event->job)) {
-            $this->recorder->exceptionOccurred($event->job, $event->exception);
-        }
+        $this->guard(function () use ($event): void {
+            if ($this->sampled($event->job)) {
+                $this->recorder->exceptionOccurred($event->job, $event->exception);
+            }
+        });
     }
 
     public function onReleased(JobReleasedAfterException $event): void
     {
-        if ($this->sampled($event->job)) {
-            $this->complete($this->recorder->released($event->connectionName, $event->job));
-        }
+        $this->guard(function () use ($event): void {
+            if ($this->sampled($event->job)) {
+                $this->complete($this->recorder->released($event->connectionName, $event->job));
+            }
+        });
     }
 
     public function onFailed(JobFailed $event): void
     {
-        if ($this->sampled($event->job)) {
-            $this->complete($this->recorder->failed($event->connectionName, $event->job, $event->exception));
-        }
+        $this->guard(function () use ($event): void {
+            if ($this->sampled($event->job)) {
+                $this->complete($this->recorder->failed($event->connectionName, $event->job, $event->exception));
+            }
+        });
     }
 
     public function onTimedOut(JobTimedOut $event): void
     {
-        if ($this->sampled($event->job)) {
-            $this->complete($this->recorder->timedOut($event->connectionName, $event->job));
-        }
+        $this->guard(function () use ($event): void {
+            if ($this->sampled($event->job)) {
+                $this->complete($this->recorder->timedOut($event->connectionName, $event->job));
+            }
+        });
     }
 
     public function onLooping(Looping $event): ?bool
     {
-        $this->metrics->looping();
+        return $this->guard(function () use ($event): ?bool {
+            $this->metrics->looping();
 
-        return $this->heartbeat->beat($event) ? false : null;
+            return $this->heartbeat->beat($event) ? false : null;
+        });
     }
 
     public function onWorkerStopping(WorkerStopping $event): void
     {
-        $this->metrics->stopping();
-        $this->heartbeat->stopping();
+        $this->guard(function (): void {
+            $this->metrics->stopping();
+            $this->heartbeat->stopping();
+        });
     }
 
     public function onQueueBusy(QueueBusy $event): void
     {
-        $properties = get_object_vars($event);
+        $this->guard(function () use ($event): void {
+            $properties = get_object_vars($event);
 
-        $this->alerts->queueBusy(
-            (string) ($properties['connectionName'] ?? $properties['connection'] ?? ''),
-            (string) $event->queue,
-            (int) $event->size,
-        );
+            $this->alerts->queueBusy(
+                (string) ($properties['connectionName'] ?? $properties['connection'] ?? ''),
+                (string) $event->queue,
+                (int) $event->size,
+            );
+        });
     }
 
     private function sampled(QueuedJob $job): bool
     {
         $uuid = $job->uuid();
 
-        return $uuid !== null && $this->sampler->accepts($uuid);
+        return $uuid !== null && Str::isUuid($uuid) && $this->sampler->accepts($uuid);
     }
 
     private function complete(?Completion $completion): void
     {
         if ($completion !== null) {
             $this->metrics->record($completion);
+        }
+    }
+
+    /**
+     * @template T
+     *
+     * @param  callable(): T  $callback
+     * @return T|null
+     */
+    private function guard(callable $callback): mixed
+    {
+        try {
+            return $callback();
+        } catch (Throwable $exception) {
+            report($exception);
+
+            return null;
         }
     }
 }

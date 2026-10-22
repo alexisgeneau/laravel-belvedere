@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Belvedere\Models\Job;
 use Belvedere\Models\JobTag;
+use Belvedere\Models\Worker;
 use Belvedere\Support\Storage;
 use Belvedere\Tests\Fixtures\Jobs\FailingJob;
 use Belvedere\Tests\Fixtures\Jobs\TaggedJob;
@@ -32,6 +33,19 @@ it('deletes records older than the retention periods and keeps the rest', functi
     expect(Job::query()->count())->toBe(1)
         ->and(JobTag::query()->count())->toBe(2)
         ->and(app(Storage::class)->query('workers')->count())->toBe(1);
+});
+
+it('forgets the workers not seen for the retention period whatever their last status', function (): void {
+    foreach ([['running', 2], ['paused', 2], ['stopped', 2], ['running', 0]] as [$status, $daysAgo]) {
+        Worker::query()->create([
+            'id' => "{$status}:{$daysAgo}", 'hostname' => 'web', 'pid' => $daysAgo, 'connection' => 'database', 'queues' => 'default',
+            'status' => $status, 'started_at' => now()->subDays(3), 'last_seen_at' => now()->subDays($daysAgo),
+        ]);
+    }
+
+    Artisan::call('belvedere:prune');
+
+    expect(Worker::query()->pluck('id')->all())->toBe(['running:0']);
 });
 
 it('clears every table', function (): void {
