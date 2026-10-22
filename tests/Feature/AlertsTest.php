@@ -53,6 +53,8 @@ it('notifies when the failure rate exceeds the threshold', function (): void {
 });
 
 it('notifies when the oldest job ready to run has waited too long', function (): void {
+    $this->freezeTime();
+
     config()->set('belvedere.alerts.queue_size', 0);
 
     SucceedingJob::dispatch();
