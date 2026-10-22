@@ -15,6 +15,10 @@
             canForget(worker) {
                 return !this.readOnly && !this.compact && ['dead', 'stopped'].includes(worker.status);
             },
+
+            supervisorName(worker) {
+                return worker.supervisor ? worker.supervisor.substring(worker.supervisor.lastIndexOf(':') + 1) : null;
+            },
         },
     };
 </script>
@@ -40,12 +44,16 @@
                 <td>
                     {{ worker.hostname }}<span class="text-muted">:{{ worker.pid }}</span>
                     <br>
-                    <small class="text-muted">Connection: {{ worker.connection }}</small>
+                    <small class="text-muted text-nowrap">Connection: {{ worker.connection }}</small>
+                    <template v-if="worker.supervisor">
+                        <br>
+                        <small class="text-muted text-nowrap" :title="worker.supervisor">Supervisor: {{ supervisorName(worker) }}</small>
+                    </template>
                 </td>
                 <td class="text-muted">{{ worker.queues.join(', ') }}</td>
                 <td><status-badge :status="worker.status" /></td>
                 <td class="text-end text-muted">{{ formatNumber(worker.jobs_processed) }}</td>
-                <td class="text-end text-muted" v-if="!compact">{{ formatMemory(worker.memory_kb) }}</td>
+                <td class="text-end text-muted table-fit" v-if="!compact">{{ formatMemory(worker.memory_kb) }}</td>
                 <td>
                     <template v-if="worker.current_job">
                         <router-link :title="worker.current_job.name" :to="{ name: 'running-job-preview', params: { uuid: worker.current_job.uuid } }">

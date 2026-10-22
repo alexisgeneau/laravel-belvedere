@@ -12,7 +12,9 @@
                 ready: false,
                 overview: null,
                 workers: [],
+                supervision: null,
                 busyQueues: [],
+                busyTargets: [],
             };
         },
 
@@ -37,6 +39,11 @@
             status() {
                 if (!this.overview) {
                     return null;
+                }
+
+                // With a master supervisor, the status is the masters'; without, the workers tell.
+                if (this.overview.supervision && this.overview.supervision.status !== 'none') {
+                    return this.overview.supervision.status;
                 }
 
                 if (this.overview.workers.alive === 0) {
@@ -67,6 +74,10 @@
                     queue.processed_1h > 0 && (busiest === null || queue.processed_1h > busiest.processed_1h) ? queue : busiest
                 ), null);
             },
+
+            masters() {
+                return this.supervision?.masters ?? [];
+            },
         },
 
         watch: {
@@ -85,14 +96,58 @@
                 return Promise.all([
                     this.$http.get('/overview'),
                     this.$http.get('/workers'),
-                ]).then(([overview, workers]) => {
+                    this.$http.get('/supervisors'),
+                ]).then(([overview, workers, supervision]) => {
                     this.overview = overview.data;
                     this.workers = workers.data.workers;
+                    this.supervision = supervision.data;
 
                     syncConnections(overview.data.connections, overview.data.connection);
 
                     this.ready = true;
                 });
+            },
+
+            isTargetBusy(target) {
+                return this.busyTargets.includes(target);
+            },
+
+            order(target, request) {
+                if (this.isTargetBusy(target)) {
+                    return;
+                }
+
+                this.busyTargets.push(target);
+
+                request()
+                    .then(() => this.load())
+                    .finally(() => {
+                        this.busyTargets = this.busyTargets.filter((name) => name !== target);
+                    });
+            },
+
+            toggleMaster(master) {
+                const verb = master.status === 'paused' ? 'continue' : 'pause';
+
+                this.order(master.name, () => this.$http.post(`/supervisors/${encodeURIComponent(master.name)}/${verb}`));
+            },
+
+            toggleSupervisor(master, supervisor) {
+                const verb = supervisor.status === 'paused' ? 'continue' : 'pause';
+
+                this.order(supervisor.full_name, () => this.$http.post(`/supervisors/${encodeURIComponent(master.name)}/${encodeURIComponent(supervisor.name)}/${verb}`));
+            },
+
+            processesByQueue(supervisor) {
+                return Object.entries(supervisor.processes_by_queue).map(([key, count]) => `${key.substring(key.indexOf(':') + 1)} ${count}`).join(', ');
+            },
+
+            balancing(supervisor) {
+                if (supervisor.balance === false || supervisor.balance === 'false') {
+                    return 'none';
+                }
+
+                return supervisor.balance === 'auto' ? `auto (${supervisor.auto_scaling_strategy})` : supervisor.balance;
             },
 
             isBusy(queue) {
@@ -211,6 +266,7 @@
                                 {{ formatNumber(overview.workers.alive) }}
                                 <small class="text-danger" v-if="overview.workers.dead > 0">({{ overview.workers.dead }} dead)</small>
                             </p>
+                            <small class="text-muted" v-if="overview.workers.supervised > 0">{{ overview.workers.supervised }} supervised</small>
                         </div>
                     </div>
 
@@ -294,6 +350,70 @@
                             <a href="#" class="control-action control-action-danger" title="Purge Queue" @click.prevent="purge(queue)">
                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
                                     <path fill-rule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 1 0 .23 1.482l.149-.022.841 10.518A2.75 2.75 0 0 0 7.596 19h4.807a2.75 2.75 0 0 0 2.742-2.53l.841-10.52.149.023a.75.75 0 0 0 .23-1.482A41.03 41.03 0 0 0 14 4.193V3.75A2.75 2.75 0 0 0 11.25 1h-2.5ZM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4ZM8.58 7.72a.75.75 0 0 0-1.5.06l.3 7.5a.75.75 0 1 0 1.5-.06l-.3-7.5Zm4.34.06a.75.75 0 1 0-1.5-.06l-.3 7.5a.75.75 0 1 0 1.5.06l.3-7.5Z" clip-rule="evenodd" />
+                                </svg>
+                            </a>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card overflow-hidden mt-4" v-for="master in masters" :key="master.name">
+            <div class="card-header d-flex align-items-center justify-content-between">
+                <h2 class="h6 m-0">
+                    Supervisor <span class="text-muted">{{ master.name }}</span>
+                    <small class="text-muted ms-2">{{ master.hostname }} · {{ master.environment }} · {{ master.processes }} processes</small>
+                    <status-badge class="ms-2" :status="master.status" />
+                </h2>
+
+                <small class="text-muted" v-if="master.status == 'inactive'" :title="formatDate(master.last_seen_at)">Last seen {{ fromNow(master.last_seen_at) }}</small>
+
+                <a href="#" class="control-action" v-else-if="!readOnly" :title="master.status == 'paused' ? 'Continue every supervisor' : 'Pause every supervisor'" @click.prevent="toggleMaster(master)">
+                    <svg v-if="master.status == 'paused'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" :class="{ spin: isTargetBusy(master.name) }">
+                        <path fill-rule="evenodd" d="M2 10a8 8 0 1 1 16 0 8 8 0 0 1-16 0Zm6.39-2.908a.75.75 0 0 1 .766.027l3.5 2.25a.75.75 0 0 1 0 1.262l-3.5 2.25A.75.75 0 0 1 8 12.25v-4.5a.75.75 0 0 1 .39-.658Z" clip-rule="evenodd" />
+                    </svg>
+                    <svg v-else xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" :class="{ spin: isTargetBusy(master.name) }">
+                        <path fill-rule="evenodd" d="M2 10a8 8 0 1 1 16 0 8 8 0 0 1-16 0Zm5-2.25A.75.75 0 0 1 7.75 7h.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1-.75-.75v-4.5Zm4 0a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1-.75-.75v-4.5Z" clip-rule="evenodd" />
+                    </svg>
+                </a>
+            </div>
+
+            <empty-state v-if="master.supervisors.length == 0">This master has no supervisor: nothing is configured for its environment.</empty-state>
+
+            <table v-else class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Supervisor</th>
+                        <th>Processes</th>
+                        <th>Queues</th>
+                        <th>Balancing</th>
+                        <th>Range</th>
+                        <th>Status</th>
+                        <th class="text-end" v-if="!readOnly && master.status != 'inactive'"></th>
+                    </tr>
+                </thead>
+
+                <tbody>
+                    <tr v-for="supervisor in master.supervisors" :key="supervisor.full_name">
+                        <td>{{ supervisor.name }}</td>
+                        <td class="text-muted">
+                            {{ supervisor.processes }}
+                            <small v-if="Object.keys(supervisor.processes_by_queue).length > 1">({{ processesByQueue(supervisor) }})</small>
+                        </td>
+                        <td class="text-muted">{{ supervisor.queues.join(', ') }}</td>
+                        <td class="text-muted">{{ balancing(supervisor) }}</td>
+                        <td class="text-muted">
+                            {{ supervisor.min_processes }} to {{ supervisor.max_processes }}
+                            <small class="badge badge-warning badge-sm ms-1" title="Every process of this pool is running: more workers would not help, the limit is the database." v-if="supervisor.at_max && supervisor.status == 'running'">at max</small>
+                        </td>
+                        <td><status-badge :status="supervisor.status" /></td>
+                        <td class="text-end table-fit" v-if="!readOnly && master.status != 'inactive'">
+                            <a href="#" class="control-action" v-if="supervisor.status != 'inactive'" :title="supervisor.status == 'paused' ? 'Continue Supervisor' : 'Pause Supervisor'" @click.prevent="toggleSupervisor(master, supervisor)">
+                                <svg v-if="supervisor.status == 'paused'" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" :class="{ spin: isTargetBusy(supervisor.full_name) }">
+                                    <path fill-rule="evenodd" d="M2 10a8 8 0 1 1 16 0 8 8 0 0 1-16 0Zm6.39-2.908a.75.75 0 0 1 .766.027l3.5 2.25a.75.75 0 0 1 0 1.262l-3.5 2.25A.75.75 0 0 1 8 12.25v-4.5a.75.75 0 0 1 .39-.658Z" clip-rule="evenodd" />
+                                </svg>
+                                <svg v-else xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" :class="{ spin: isTargetBusy(supervisor.full_name) }">
+                                    <path fill-rule="evenodd" d="M2 10a8 8 0 1 1 16 0 8 8 0 0 1-16 0Zm5-2.25A.75.75 0 0 1 7.75 7h.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1-.75-.75v-4.5Zm4 0a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-.5a.75.75 0 0 1-.75-.75v-4.5Z" clip-rule="evenodd" />
                                 </svg>
                             </a>
                         </td>

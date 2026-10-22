@@ -22,7 +22,8 @@ final class ClearCommand extends Command
             return self::FAILURE;
         }
 
-        foreach (['job_tags', 'jobs', 'workers', 'metrics', 'actions', 'monitored_tags'] as $table) {
+        // The masters and supervisors still running write themselves back at their next heartbeat.
+        foreach (['job_tags', 'jobs', 'workers', 'metrics', 'actions', 'monitored_tags', 'commands', 'supervisors', 'masters'] as $table) {
             $storage->query($table)->delete();
         }
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Belvedere;
 
+use Belvedere\Supervision\MasterSupervisor;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -46,8 +47,18 @@ final class Belvedere
         ));
     }
 
+    /**
+     * What the master supervisors of this machine are named after instead of its
+     * hostname, for the machines whose hostname is not stable.
+     */
+    public static function nameMasterUsing(?Closure $callback): void
+    {
+        MasterSupervisor::determineNameUsing($callback);
+    }
+
     public static function flushState(): void
     {
         self::$authUsing = null;
+        MasterSupervisor::determineNameUsing(null);
     }
 }

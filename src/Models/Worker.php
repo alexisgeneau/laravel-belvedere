@@ -14,6 +14,7 @@ use Illuminate\Support\Carbon;
  * @property int $pid
  * @property string $connection
  * @property string $queues
+ * @property string|null $supervisor
  * @property WorkerStatus $status
  * @property int $jobs_processed
  * @property int|null $memory_kb

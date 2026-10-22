@@ -51,6 +51,49 @@ return [
         'dead_after_seconds' => 90,
     ],
 
+    // The workers `php artisan belvedere` starts and supervises: the keys of Horizon's
+    // `defaults` and `environments`, with the queue connection changed. The dashboard
+    // works without this command; it only observes the workers started by hand.
+    'supervisor' => [
+        // Memory (MB) the master process may use before it restarts.
+        'memory_limit' => 64,
+        'heartbeat_seconds' => 5,
+        'inactive_after_seconds' => 30,
+
+        'defaults' => [
+            'supervisor-1' => [
+                'connection' => 'database',
+                'queue' => ['default'],
+                'balance' => 'auto',
+                'autoScalingStrategy' => 'time',
+                'minProcesses' => 1,
+                'maxProcesses' => 1,
+                'balanceMaxShift' => 1,
+                'balanceCooldown' => 3,
+                'maxTime' => 0,
+                'maxJobs' => 0,
+                'memory' => 128,
+                'tries' => 1,
+                'timeout' => 60,
+                'nice' => 0,
+            ],
+        ],
+
+        'environments' => [
+            'production' => [
+                'supervisor-1' => [
+                    'maxProcesses' => 6,
+                ],
+            ],
+
+            'local' => [
+                'supervisor-1' => [
+                    'maxProcesses' => 2,
+                ],
+            ],
+        ],
+    ],
+
     'alerts' => [
         'routes' => [
             'mail' => env('BELVEDERE_ALERT_MAIL'),
@@ -65,6 +108,8 @@ return [
         'failure_rate_minimum_jobs' => 20,
         'window_minutes' => 15,
         'dead_workers' => true,
+        // A master supervisor gone silent, or workers left behind by a dead supervisor.
+        'supervisor' => true,
         'cooldown_minutes' => 30,
     ],
 

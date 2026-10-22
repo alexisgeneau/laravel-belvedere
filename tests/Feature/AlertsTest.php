@@ -5,12 +5,16 @@ declare(strict_types=1);
 use Belvedere\Alerts\AlertEvaluator;
 use Belvedere\Notifications\FailureRateExceeded;
 use Belvedere\Notifications\LongWait;
+use Belvedere\Notifications\OrphanWorkers;
 use Belvedere\Notifications\QueueBacklog;
+use Belvedere\Notifications\SupervisorDown;
 use Belvedere\Notifications\WorkerDied;
 use Belvedere\Queues\JobActions;
+use Belvedere\Support\Storage;
 use Belvedere\Tests\Fixtures\Jobs\FailingJob;
 use Belvedere\Tests\Fixtures\Jobs\SucceedingJob;
 use Illuminate\Queue\Events\Looping;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Notification;
@@ -113,4 +117,82 @@ it('sends nothing when no route is configured', function (): void {
     expect(app(AlertEvaluator::class)->evaluate())->toHaveCount(1);
 
     Notification::assertNothingSent();
+});
+
+it('says when the pool serving a slow queue is already at its maximum', function (): void {
+    $this->freezeTime();
+    config()->set('belvedere.alerts.queue_size', 0);
+
+    SucceedingJob::dispatch();
+    $this->travel(2)->minutes();
+
+    app(Storage::class)->query('supervisors')->insert([
+        'name' => 'web-1-abcd:supervisor-1',
+        'master' => 'web-1-abcd',
+        'hostname' => 'web-1',
+        'pid' => 777,
+        'status' => 'running',
+        'processes' => json_encode(['database:default' => 3]),
+        'options' => json_encode(['queue' => 'default', 'maxProcesses' => 3, 'timeout' => 60]),
+        'started_at' => Carbon::now(),
+        'last_seen_at' => Carbon::now(),
+    ]);
+
+    $alert = app(AlertEvaluator::class)->evaluate()->sole();
+
+    expect($alert->message)->toEndWith('The supervisor pool is already at its maximum of 3 processes.');
+
+    Notification::assertSentOnDemand(LongWait::class, static fn (LongWait $notification): bool => $notification->poolMaximum === 3);
+});
+
+it('notifies a master gone silent with nobody taking over on its host, and the workers a dead supervisor left', function (): void {
+    config()->set('belvedere.alerts.queue_size', 0);
+
+    foreach ([['web-1-dead', 'web-1', 120], ['web-1-new', 'web-1', 0], ['db-1-dead', 'db-1', 120]] as [$name, $host, $age]) {
+        app(Storage::class)->query('masters')->insert([
+            'name' => $name,
+            'hostname' => $host,
+            'pid' => 1,
+            'environment' => 'testing',
+            'status' => 'running',
+            'supervisors' => '[]',
+            'started_at' => Carbon::now()->subHour(),
+            'last_seen_at' => Carbon::now()->subSeconds($age),
+        ]);
+    }
+
+    // web-1-new:reports was started a minute ago: worker 13 is from the one it replaced, 14 is its own.
+    app(Storage::class)->query('supervisors')->insert([
+        'name' => 'web-1-new:reports',
+        'master' => 'web-1-new',
+        'hostname' => 'web-1',
+        'pid' => 778,
+        'status' => 'running',
+        'processes' => json_encode(['database:reports' => 1]),
+        'options' => json_encode(['queue' => 'reports', 'maxProcesses' => 1, 'timeout' => 10]),
+        'started_at' => Carbon::now()->subMinute(),
+        'last_seen_at' => Carbon::now(),
+    ]);
+
+    app(Storage::class)->query('workers')->insert([
+        ['id' => 'db-1:10', 'hostname' => 'db-1', 'pid' => 10, 'connection' => 'database', 'queues' => 'default', 'supervisor' => 'db-1-dead:supervisor-1', 'status' => 'running', 'jobs_processed' => 0, 'started_at' => Carbon::now(), 'last_seen_at' => Carbon::now()],
+        ['id' => 'db-1:11', 'hostname' => 'db-1', 'pid' => 11, 'connection' => 'database', 'queues' => 'default', 'supervisor' => 'db-1-dead:supervisor-1', 'status' => 'running', 'jobs_processed' => 0, 'started_at' => Carbon::now(), 'last_seen_at' => Carbon::now()],
+        ['id' => 'web-1:12', 'hostname' => 'web-1', 'pid' => 12, 'connection' => 'database', 'queues' => 'default', 'supervisor' => null, 'status' => 'running', 'jobs_processed' => 0, 'started_at' => Carbon::now(), 'last_seen_at' => Carbon::now()],
+        ['id' => 'web-1:13', 'hostname' => 'web-1', 'pid' => 13, 'connection' => 'database', 'queues' => 'reports', 'supervisor' => 'web-1-new:reports', 'status' => 'running', 'jobs_processed' => 0, 'started_at' => Carbon::now()->subHour(), 'last_seen_at' => Carbon::now()],
+        ['id' => 'web-1:14', 'hostname' => 'web-1', 'pid' => 14, 'connection' => 'database', 'queues' => 'reports', 'supervisor' => 'web-1-new:reports', 'status' => 'running', 'jobs_processed' => 0, 'started_at' => Carbon::now()->subMinute(), 'last_seen_at' => Carbon::now()],
+    ]);
+
+    $alerts = app(AlertEvaluator::class)->evaluate();
+
+    expect($alerts->pluck('fingerprint')->all())->toBe(['supervisor-down:db-1', 'orphans:db-1', 'orphans:web-1'])
+        ->and($alerts[1]->message)->toBe('2 orphan workers on [db-1]: run belvedere:orphans --kill there.')
+        ->and($alerts[2]->message)->toBe('1 orphan worker on [web-1]: run belvedere:orphans --kill there.');
+
+    Notification::assertSentOnDemandTimes(SupervisorDown::class, 1);
+    Notification::assertSentOnDemand(OrphanWorkers::class, static fn (OrphanWorkers $notification): bool => $notification->hostname === 'db-1' && $notification->count === 2);
+    Notification::assertSentOnDemand(OrphanWorkers::class, static fn (OrphanWorkers $notification): bool => $notification->hostname === 'web-1' && $notification->count === 1);
+
+    config()->set('belvedere.alerts.supervisor', false);
+
+    expect(app(AlertEvaluator::class)->evaluate())->toHaveCount(0);
 });

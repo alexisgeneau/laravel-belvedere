@@ -9,6 +9,7 @@ use Belvedere\Queues\QueuePauser;
 use Belvedere\Support\Storage;
 use Belvedere\Support\WorkerIdentity;
 use Illuminate\Queue\Events\Looping;
+use Illuminate\Queue\Events\WorkerStarting;
 use Illuminate\Support\Carbon;
 
 final class WorkerHeartbeat
@@ -21,11 +22,30 @@ final class WorkerHeartbeat
 
     private int $processed = 0;
 
+    private ?string $supervisor = null;
+
     public function __construct(
         private readonly Storage $storage,
         private readonly QueuePauser $pauser,
         private readonly int $interval,
     ) {}
+
+    /** The supervisor that started this worker named it; a worker started by hand keeps Laravel's default name. */
+    public function starting(WorkerStarting $event): void
+    {
+        $this->supervisor = self::supervisorFromName((string) $event->workerOptions->name);
+    }
+
+    /**
+     * Laravel dispatches WorkerStarting since 12.18; before, the name is read from the
+     * command line the supervisor built.
+     */
+    public static function supervisorFromName(?string $name): ?string
+    {
+        $name ??= WorkerIdentity::nameOption();
+
+        return $name !== null && $name !== '' && $name !== 'default' ? $name : null;
+    }
 
     public function beat(Looping $event): bool
     {
@@ -61,8 +81,9 @@ final class WorkerHeartbeat
     {
         $now = Carbon::now();
         $this->startedAt ??= $now;
+        $this->supervisor ??= self::supervisorFromName(null);
 
-        $columns = ['connection', 'queues', 'status', 'jobs_processed', 'memory_kb', 'last_seen_at'];
+        $columns = ['connection', 'queues', 'supervisor', 'status', 'jobs_processed', 'memory_kb', 'last_seen_at'];
 
         // The first beat of a process may land on the row of a previous one with the same id: a
         // restarted container keeps its hostname and runs the worker as pid 1 again. Start over.
@@ -77,6 +98,7 @@ final class WorkerHeartbeat
                 'pid' => WorkerIdentity::pid(),
                 'connection' => $event->connectionName,
                 'queues' => $event->queue,
+                'supervisor' => $this->supervisor,
                 'status' => $status->value,
                 'jobs_processed' => $this->processed,
                 'memory_kb' => (int) (memory_get_usage(true) / 1024),

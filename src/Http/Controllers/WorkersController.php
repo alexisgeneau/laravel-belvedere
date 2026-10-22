@@ -14,10 +14,19 @@ use Illuminate\Http\Request;
 
 final class WorkersController extends Controller
 {
-    public function index(Repository $config): JsonResponse
+    public function index(Request $request, Repository $config): JsonResponse
     {
         $deadAfter = (int) $config->get('belvedere.workers.dead_after_seconds', 90);
-        $workers = Worker::query()->orderBy('hostname')->orderBy('pid')->get();
+        $supervisor = $this->optionalString($request, 'supervisor');
+
+        $workers = Worker::query()
+            ->when($supervisor !== null, static fn ($query) => $query->where('supervisor', $supervisor))
+            ->orderBy('hostname')
+            ->orderByRaw('case when supervisor is null then 1 else 0 end')
+            ->orderBy('supervisor')
+            ->orderBy('queues')
+            ->orderBy('pid')
+            ->get();
 
         $current = Job::query()
             ->where('status', JobStatus::Running->value)
@@ -37,6 +46,7 @@ final class WorkersController extends Controller
                     'pid' => $worker->pid,
                     'connection' => $worker->connection,
                     'queues' => $worker->queueNames(),
+                    'supervisor' => $worker->supervisor,
                     'status' => $worker->effectiveStatus($deadAfter)->value,
                     'jobs_processed' => $worker->jobs_processed,
                     'memory_kb' => $worker->memory_kb,

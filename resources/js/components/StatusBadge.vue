@@ -13,6 +13,7 @@
         lost: 'badge-danger',
         dead: 'badge-danger',
         stopped: 'badge-secondary',
+        inactive: 'badge-danger',
     };
 
     export default {

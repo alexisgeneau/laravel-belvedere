@@ -15,6 +15,7 @@ use Illuminate\Queue\Events\JobReleasedAfterException;
 use Illuminate\Queue\Events\JobTimedOut;
 use Illuminate\Queue\Events\Looping;
 use Illuminate\Queue\Events\QueueBusy;
+use Illuminate\Queue\Events\WorkerStarting;
 use Illuminate\Queue\Events\WorkerStopping;
 use Illuminate\Support\Str;
 use Throwable;
@@ -39,7 +40,11 @@ final readonly class QueueEventSubscriber
     /** @return array<class-string, string> */
     public function subscribe(): array
     {
+        // WorkerStarting exists since Laravel 12.18; without it the heartbeat reads the command line.
+        $starting = class_exists(WorkerStarting::class) ? [WorkerStarting::class => 'onWorkerStarting'] : [];
+
         return [
+            ...$starting,
             JobQueued::class => 'onQueued',
             JobProcessing::class => 'onProcessing',
             JobProcessed::class => 'onProcessed',
@@ -126,6 +131,13 @@ final readonly class QueueEventSubscriber
             $this->metrics->looping();
 
             return $this->heartbeat->beat($event) ? false : null;
+        });
+    }
+
+    public function onWorkerStarting(WorkerStarting $event): void
+    {
+        $this->guard(function () use ($event): void {
+            $this->heartbeat->starting($event);
         });
     }
 

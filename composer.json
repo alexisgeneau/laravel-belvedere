@@ -31,7 +31,8 @@
         "illuminate/queue": "^12.0|^13.0",
         "illuminate/routing": "^12.0|^13.0",
         "illuminate/support": "^12.0|^13.0",
-        "spatie/laravel-package-tools": "^1.16"
+        "spatie/laravel-package-tools": "^1.16",
+        "symfony/process": "^7.0|^8.0"
     },
     "require-dev": {
         "larastan/larastan": "^3.0",
@@ -42,7 +43,9 @@
         "pestphp/pest-plugin-laravel": "^3.0|^4.0"
     },
     "suggest": {
-        "laravel/slack-notification-channel": "Required to send Belvedere alerts to Slack (^3.0)."
+        "laravel/slack-notification-channel": "Required to send Belvedere alerts to Slack (^3.0).",
+        "ext-pcntl": "Required by the belvedere command, which starts and supervises the queue workers.",
+        "ext-posix": "Required by the belvedere command and its pause, continue, terminate and orphans commands."
     },
     "autoload": {
         "psr-4": {

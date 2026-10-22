@@ -7,8 +7,11 @@ use Belvedere\Collector\WorkerHeartbeat;
 use Belvedere\Enums\WorkerStatus;
 use Belvedere\Models\Worker;
 use Belvedere\Queues\JobActions;
+use Belvedere\Support\WorkerIdentity;
 use Belvedere\Tests\Fixtures\Jobs\SucceedingJob;
 use Illuminate\Queue\Events\Looping;
+use Illuminate\Queue\Events\WorkerStarting;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Event;
 
 it('registers a heartbeat for the worker and marks it stopped when it exits', function (): void {
@@ -77,4 +80,37 @@ it('starts over when a new process inherits the id of a previous worker', functi
         ->and($worker->started_at->greaterThan($previous->started_at))->toBeTrue()
         ->and($worker->jobs_processed)->toBe(0)
         ->and($worker->queues)->toBe('high');
+});
+
+it('records the supervisor that started the worker, from the name the supervisor gave it', function (): void {
+    SucceedingJob::dispatch();
+
+    Artisan::call('queue:work', ['connection' => 'database', '--stop-when-empty' => true, '--sleep' => 0, '--name' => 'web-1-abcd:supervisor-1']);
+
+    expect(Worker::query()->sole()->supervisor)->toBe('web-1-abcd:supervisor-1');
+})->skip(! class_exists(WorkerStarting::class), 'Laravel dispatches WorkerStarting since 12.18.');
+
+it('leaves the supervisor empty for a worker started by hand', function (): void {
+    SucceedingJob::dispatch();
+
+    $this->workQueue();
+
+    expect(Worker::query()->sole()->supervisor)->toBeNull();
+});
+
+it('reads the worker name from the command line when Laravel gives no event', function (): void {
+    $argv = $_SERVER['argv'] ?? null;
+
+    $_SERVER['argv'] = ['artisan', 'queue:work', 'database', '--name=web-1-abcd:supervisor-1', '--queue=default'];
+    expect(WorkerIdentity::nameOption())->toBe('web-1-abcd:supervisor-1')
+        ->and(WorkerHeartbeat::supervisorFromName(null))->toBe('web-1-abcd:supervisor-1');
+
+    $_SERVER['argv'] = ['artisan', 'queue:work', '--name', 'default'];
+    expect(WorkerIdentity::nameOption())->toBe('default')
+        ->and(WorkerHeartbeat::supervisorFromName(null))->toBeNull();
+
+    $_SERVER['argv'] = ['artisan', 'queue:work'];
+    expect(WorkerIdentity::nameOption())->toBeNull();
+
+    $_SERVER['argv'] = $argv;
 });

@@ -3,11 +3,16 @@
 declare(strict_types=1);
 
 use Belvedere\Belvedere;
+use Belvedere\Enums\ActionType;
+use Belvedere\Models\Action;
 use Belvedere\Models\Job;
 use Belvedere\Models\MonitoredTag;
+use Belvedere\Supervision\Repositories\CommandQueue;
 use Belvedere\Tests\Fixtures\Jobs\FailingJob;
 use Belvedere\Tests\Fixtures\Jobs\SucceedingJob;
 use Belvedere\Tests\Fixtures\Jobs\TaggedJob;
+use Illuminate\Queue\Events\WorkerStarting;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 
 it('denies access outside the local environment until a gate or callback allows it', function (): void {
@@ -231,3 +236,65 @@ it('exposes metrics aggregates and series', function (): void {
 
     $this->getJson('/belvedere/api/metrics/queue/default?range=1y')->assertNotFound();
 });
+
+it('serves the supervisors and takes their pause and continue orders', function (): void {
+    $this->authorize();
+
+    $this->getJson('/belvedere/api/supervisors')->assertOk()->assertJsonPath('status', 'none')->assertJsonPath('masters', []);
+    $this->getJson('/belvedere/api/overview')->assertJsonPath('supervision.status', 'none')->assertJsonPath('supervision.processes', 0);
+
+    $master = $this->master('production');
+    $master->provision($this->supervisorOptions(['name' => $master->name.':supervisor-1', 'queue' => 'default,media', 'maxProcesses' => 4]));
+    $master->persist();
+
+    $supervisor = $this->supervisor(['name' => $master->name.':supervisor-1', 'queue' => 'default,media', 'maxProcesses' => 4]);
+    $supervisor->scale(2);
+    $supervisor->persist();
+
+    $this->getJson('/belvedere/api/supervisors')
+        ->assertOk()
+        ->assertJsonPath('status', 'running')
+        ->assertJsonPath('processes', 2)
+        ->assertJsonPath('masters.0.name', $master->name)
+        ->assertJsonPath('masters.0.status', 'running')
+        ->assertJsonPath('masters.0.processes', 2)
+        ->assertJsonPath('masters.0.supervisors.0.name', 'supervisor-1')
+        ->assertJsonPath('masters.0.supervisors.0.queues', ['default', 'media'])
+        ->assertJsonPath('masters.0.supervisors.0.processes_by_queue', ['database:default' => 1, 'database:media' => 1])
+        ->assertJsonPath('masters.0.supervisors.0.balance', 'auto')
+        ->assertJsonPath('masters.0.supervisors.0.max_processes', 4)
+        ->assertJsonPath('masters.0.supervisors.0.at_max', false);
+
+    $this->getJson('/belvedere/api/overview')->assertJsonPath('supervision.status', 'running')->assertJsonPath('supervision.processes', 2);
+
+    $this->postJson("/belvedere/api/supervisors/{$master->name}/pause")->assertOk()->assertJsonPath('paused', true);
+    $this->postJson("/belvedere/api/supervisors/{$master->name}/supervisor-1/pause")->assertOk();
+    $this->postJson("/belvedere/api/supervisors/{$master->name}/supervisor-1/continue")->assertOk()->assertJsonPath('paused', false);
+    $this->postJson("/belvedere/api/supervisors/{$master->name}/nope/pause")->assertNotFound();
+    $this->postJson('/belvedere/api/supervisors/other-host-zz99/pause')->assertNotFound();
+
+    expect(app(CommandQueue::class)->pending($master->name))->toBe([['command' => 'pause', 'payload' => []]])
+        ->and(app(CommandQueue::class)->pending($master->name.':supervisor-1'))->toBe([['command' => 'pause', 'payload' => []], ['command' => 'continue', 'payload' => []]])
+        ->and(Action::query()->pluck('action')->all())->toBe([ActionType::PauseSupervisor, ActionType::PauseSupervisor, ActionType::ContinueSupervisor]);
+
+    $this->travel(31)->seconds();
+
+    $this->getJson('/belvedere/api/supervisors')->assertJsonPath('status', 'inactive')->assertJsonPath('masters.0.status', 'inactive')->assertJsonPath('masters.0.supervisors.0.status', 'inactive');
+    $this->postJson("/belvedere/api/supervisors/{$master->name}/pause")->assertNotFound();
+
+    config()->set('belvedere.read_only', true);
+
+    $this->postJson("/belvedere/api/supervisors/{$master->name}/continue")->assertForbidden();
+    $this->getJson('/belvedere/api/supervisors')->assertOk();
+});
+
+it('lists the workers with their supervisor and filters by it', function (): void {
+    $this->authorize();
+
+    Artisan::call('queue:work', ['connection' => 'database', '--stop-when-empty' => true, '--sleep' => 0, '--name' => 'web-1-abcd:supervisor-1']);
+
+    $this->getJson('/belvedere/api/workers')->assertOk()->assertJsonPath('workers.0.supervisor', 'web-1-abcd:supervisor-1');
+    $this->getJson('/belvedere/api/workers?supervisor=web-1-abcd:supervisor-1')->assertJsonCount(1, 'workers');
+    $this->getJson('/belvedere/api/workers?supervisor=other')->assertJsonCount(0, 'workers');
+    $this->getJson('/belvedere/api/overview')->assertJsonPath('workers.supervised', 0);
+})->skip(! class_exists(WorkerStarting::class), 'Laravel dispatches WorkerStarting since 12.18.');

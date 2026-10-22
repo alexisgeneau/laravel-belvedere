@@ -11,6 +11,7 @@ use Belvedere\Http\Controllers\MonitoringController;
 use Belvedere\Http\Controllers\NativeJobsController;
 use Belvedere\Http\Controllers\OverviewController;
 use Belvedere\Http\Controllers\QueuesController;
+use Belvedere\Http\Controllers\SupervisorsController;
 use Belvedere\Http\Controllers\WorkersController;
 use Belvedere\Http\Middleware\Authorize;
 use Belvedere\Http\Middleware\EnforceReadOnly;
@@ -54,6 +55,12 @@ Route::group([
 
         Route::get('workers', [WorkersController::class, 'index'])->name('workers.index');
         Route::delete('workers/{id}', [WorkersController::class, 'destroy'])->name('workers.destroy');
+
+        Route::get('supervisors', [SupervisorsController::class, 'index'])->name('supervisors.index');
+        Route::post('supervisors/{master}/pause', [SupervisorsController::class, 'pauseMaster'])->name('supervisors.pause');
+        Route::post('supervisors/{master}/continue', [SupervisorsController::class, 'continueMaster'])->name('supervisors.continue');
+        Route::post('supervisors/{master}/{supervisor}/pause', [SupervisorsController::class, 'pauseSupervisor'])->name('supervisors.pause-one');
+        Route::post('supervisors/{master}/{supervisor}/continue', [SupervisorsController::class, 'continueSupervisor'])->name('supervisors.continue-one');
 
         Route::get('metrics/{type}', [MetricsController::class, 'index'])->whereIn('type', ['queue', 'job'])->name('metrics.index');
         Route::get('metrics/{type}/{name}', [MetricsController::class, 'show'])->whereIn('type', ['queue', 'job'])->name('metrics.show');

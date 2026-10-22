@@ -18,4 +18,6 @@ enum ActionType: string
     case CancelBatch = 'cancel_batch';
     case RetryBatch = 'retry_batch';
     case ForgetWorker = 'forget_worker';
+    case PauseSupervisor = 'pause_supervisor';
+    case ContinueSupervisor = 'continue_supervisor';
 }

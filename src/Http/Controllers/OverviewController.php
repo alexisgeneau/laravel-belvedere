@@ -11,6 +11,7 @@ use Belvedere\Models\Job;
 use Belvedere\Models\Worker;
 use Belvedere\Queues\NativeQueue;
 use Belvedere\Queues\QueueCounts;
+use Belvedere\Supervision\SupervisionStatus;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,7 +19,7 @@ use Illuminate\Support\Carbon;
 
 final class OverviewController extends Controller
 {
-    public function __invoke(Request $request, NativeQueue $native, MetricsReader $metrics, Repository $config): JsonResponse
+    public function __invoke(Request $request, NativeQueue $native, MetricsReader $metrics, Repository $config, SupervisionStatus $supervision): JsonResponse
     {
         $connection = $this->connection($request, $native);
         $deadAfter = (int) $config->get('belvedere.workers.dead_after_seconds', 90);
@@ -57,6 +58,11 @@ final class OverviewController extends Controller
             'workers' => [
                 'alive' => $workers->filter(static fn (Worker $worker): bool => in_array($worker->effectiveStatus($deadAfter), [WorkerStatus::Running, WorkerStatus::Paused], true))->count(),
                 'dead' => $workers->filter(static fn (Worker $worker): bool => $worker->isDead($deadAfter))->count(),
+                'supervised' => $workers->filter(static fn (Worker $worker): bool => $worker->supervisor !== null && in_array($worker->effectiveStatus($deadAfter), [WorkerStatus::Running, WorkerStatus::Paused], true))->count(),
+            ],
+            'supervision' => [
+                'status' => $supervision->overall(),
+                'processes' => $supervision->totalProcesses(),
             ],
             'lost_24h' => $lost,
             'generated_at' => Carbon::now()->toIso8601String(),

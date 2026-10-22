@@ -17,14 +17,33 @@ use Belvedere\Console\ClearCommand;
 use Belvedere\Console\InstallCommand;
 use Belvedere\Console\PruneCommand;
 use Belvedere\Console\StatusCommand;
+use Belvedere\Console\Supervision\BelvedereCommand;
+use Belvedere\Console\Supervision\ContinueCommand;
+use Belvedere\Console\Supervision\ContinueSupervisorCommand;
+use Belvedere\Console\Supervision\OrphansCommand;
+use Belvedere\Console\Supervision\PauseCommand;
+use Belvedere\Console\Supervision\PauseSupervisorCommand;
+use Belvedere\Console\Supervision\SupervisorCommand;
+use Belvedere\Console\Supervision\SupervisorsCommand;
+use Belvedere\Console\Supervision\TerminateCommand;
 use Belvedere\Queues\FailedJobs;
 use Belvedere\Queues\NativeQueue;
 use Belvedere\Queues\QueuePauser;
+use Belvedere\Supervision\AutoScaler;
+use Belvedere\Supervision\ProcessSignaller;
+use Belvedere\Supervision\QueueLoad;
+use Belvedere\Supervision\Repositories\CommandQueue;
+use Belvedere\Supervision\Repositories\MasterRepository;
+use Belvedere\Supervision\Repositories\SupervisorRepository;
+use Belvedere\Supervision\SupervisionFactory;
+use Belvedere\Supervision\SupervisionStatus;
+use Belvedere\Supervision\SystemProcesses;
 use Belvedere\Support\Assets;
 use Belvedere\Support\Redactor;
 use Belvedere\Support\Snapshot;
 use Belvedere\Support\Storage;
 use Illuminate\Contracts\Config\Repository;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Queue\Queue;
@@ -40,13 +59,22 @@ final class BelvedereServiceProvider extends PackageServiceProvider
             ->hasConfigFile()
             ->hasViews()
             ->hasRoute('web')
-            ->hasMigration('create_belvedere_tables')
+            ->hasMigrations(['create_belvedere_tables', 'create_belvedere_tables_for_supervisors'])
             ->hasCommands([
                 InstallCommand::class,
                 PruneCommand::class,
                 ClearCommand::class,
                 CheckCommand::class,
                 StatusCommand::class,
+                BelvedereCommand::class,
+                SupervisorCommand::class,
+                TerminateCommand::class,
+                PauseCommand::class,
+                ContinueCommand::class,
+                PauseSupervisorCommand::class,
+                ContinueSupervisorCommand::class,
+                SupervisorsCommand::class,
+                OrphansCommand::class,
             ]);
     }
 
@@ -122,12 +150,41 @@ final class BelvedereServiceProvider extends PackageServiceProvider
                 $app->make(Storage::class),
                 $app->make('cache')->store($config->get('belvedere.cache_store')),
                 $config,
+                $app->make(MasterRepository::class),
+                $app->make(SupervisorRepository::class),
             );
         });
 
         $this->app->singleton(NativeQueue::class);
         $this->app->singleton(Reconciler::class);
         $this->app->singleton(QueueEventSubscriber::class);
+
+        $this->registerSupervision();
+    }
+
+    private function registerSupervision(): void
+    {
+        $inactiveAfter = fn (): int => max(1, (int) $this->app->make(Repository::class)->get('belvedere.supervisor.inactive_after_seconds', 30));
+
+        $this->app->singleton(SupervisorRepository::class, fn (Application $app): SupervisorRepository => new SupervisorRepository($app->make(Storage::class), $inactiveAfter()));
+        $this->app->singleton(MasterRepository::class, fn (Application $app): MasterRepository => new MasterRepository($app->make(Storage::class), $app->make(SupervisorRepository::class), $inactiveAfter()));
+        $this->app->singleton(CommandQueue::class);
+        $this->app->singleton(QueueLoad::class);
+        $this->app->singleton(AutoScaler::class);
+        $this->app->singleton(SystemProcesses::class, static fn (): SystemProcesses => new SystemProcesses);
+        $this->app->singleton(ProcessSignaller::class, static fn (): ProcessSignaller => new ProcessSignaller);
+        $this->app->singleton(SupervisionStatus::class);
+
+        $this->app->singleton(SupervisionFactory::class, fn (Application $app): SupervisionFactory => new SupervisionFactory(
+            $app->make(MasterRepository::class),
+            $app->make(SupervisorRepository::class),
+            $app->make(CommandQueue::class),
+            $app->make(AutoScaler::class),
+            $app->make(SystemProcesses::class),
+            $app->make(ExceptionHandler::class),
+            $app->make(Repository::class),
+            $app->basePath(),
+        ));
     }
 
     public function packageBooted(): void

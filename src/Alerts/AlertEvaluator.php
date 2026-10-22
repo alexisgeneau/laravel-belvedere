@@ -7,10 +7,16 @@ namespace Belvedere\Alerts;
 use Belvedere\Models\Worker;
 use Belvedere\Notifications\FailureRateExceeded;
 use Belvedere\Notifications\LongWait;
+use Belvedere\Notifications\OrphanWorkers;
 use Belvedere\Notifications\QueueBacklog;
+use Belvedere\Notifications\SupervisorDown;
 use Belvedere\Notifications\WorkerDied;
 use Belvedere\Queues\NativeQueue;
 use Belvedere\Queues\QueuePauser;
+use Belvedere\Supervision\MasterState;
+use Belvedere\Supervision\Repositories\MasterRepository;
+use Belvedere\Supervision\Repositories\SupervisorRepository;
+use Belvedere\Supervision\SupervisorState;
 use Belvedere\Support\Storage;
 use Illuminate\Contracts\Cache\Repository as Cache;
 use Illuminate\Contracts\Config\Repository as Config;
@@ -26,12 +32,14 @@ final readonly class AlertEvaluator
         private Storage $storage,
         private Cache $cache,
         private Config $config,
+        private MasterRepository $masters,
+        private SupervisorRepository $supervisors,
     ) {}
 
     /** @return Collection<int, Alert> */
     public function evaluate(): Collection
     {
-        $alerts = collect([...$this->backlogs(), ...$this->waits(), ...$this->failureRates(), ...$this->deadWorkers()]);
+        $alerts = collect([...$this->backlogs(), ...$this->waits(), ...$this->failureRates(), ...$this->deadWorkers(), ...$this->supervision()]);
 
         $alerts->each(fn (Alert $alert) => $this->notify($alert));
 
@@ -81,6 +89,7 @@ final readonly class AlertEvaluator
         }
 
         $alerts = [];
+        $pools = $this->supervisors->all();
 
         foreach ($this->native->connections() as $connection) {
             foreach ($this->native->oldestWaits($connection) as $queue => $seconds) {
@@ -90,10 +99,13 @@ final readonly class AlertEvaluator
                     continue;
                 }
 
+                $maximum = $this->poolAtMaximum($pools, $connection, $queue);
+
                 $alerts[] = new Alert(
                     "wait:{$connection}:{$queue}",
-                    "The oldest job on queue [{$queue}] ({$connection}) has been waiting for ".LongWait::duration($seconds).' (threshold '.LongWait::duration($threshold).').',
-                    new LongWait($connection, $queue, $seconds, $threshold),
+                    "The oldest job on queue [{$queue}] ({$connection}) has been waiting for ".LongWait::duration($seconds).' (threshold '.LongWait::duration($threshold).').'
+                    .($maximum !== null ? " The supervisor pool is already at its maximum of {$maximum} processes." : ''),
+                    new LongWait($connection, $queue, $seconds, $threshold, $maximum),
                 );
             }
         }
@@ -160,6 +172,79 @@ final readonly class AlertEvaluator
                 new WorkerDied($worker->id, $worker->connection, $worker->queues, $worker->last_seen_at),
             ))
             ->all();
+    }
+
+    /**
+     * The maximum of the supervisor pool serving a queue, when every one of its
+     * processes is running: more workers would not help.
+     *
+     * @param  Collection<int, SupervisorState>  $pools
+     */
+    private function poolAtMaximum(Collection $pools, string $connection, string $queue): ?int
+    {
+        $supervisor = $pools->first(static fn (SupervisorState $supervisor): bool => array_key_exists("{$connection}:{$queue}", $supervisor->processes));
+
+        if ($supervisor === null || $supervisor->maxProcesses() <= 0 || $supervisor->totalProcesses() < $supervisor->maxProcesses()) {
+            return null;
+        }
+
+        return $supervisor->maxProcesses();
+    }
+
+    /**
+     * A master that went silent with nobody taking over on its host, and the
+     * workers a dead supervisor left behind.
+     *
+     * @return list<Alert>
+     */
+    private function supervision(): array
+    {
+        if (! $this->config->get('belvedere.alerts.supervisor', true)) {
+            return [];
+        }
+
+        $inactiveAfter = $this->masters->inactiveAfterSeconds();
+        $masters = $this->masters->recent();
+        $aliveHosts = $masters->filter(static fn (MasterState $master): bool => $master->alive($inactiveAfter))->map(static fn (MasterState $master): string => $master->hostname);
+
+        $alerts = [];
+
+        foreach ($masters as $master) {
+            if ($master->alive($inactiveAfter) || $aliveHosts->contains($master->hostname)) {
+                continue;
+            }
+
+            $alerts[] = new Alert(
+                "supervisor-down:{$master->hostname}",
+                "Master supervisor [{$master->name}] on [{$master->hostname}] has not reported since {$master->lastSeenAt->toDateTimeString()}.",
+                new SupervisorDown($master->name, $master->hostname, $master->lastSeenAt),
+            );
+        }
+
+        $supervisors = $this->supervisors->all()->keyBy(static fn (SupervisorState $supervisor): string => $supervisor->name);
+        $deadAfter = (int) $this->config->get('belvedere.workers.dead_after_seconds', 90);
+
+        // A supervisor started after one of its workers is a new process of the same name: the worker is left over from the previous one.
+        $orphans = Worker::query()
+            ->alive($deadAfter)
+            ->whereNotNull('supervisor')
+            ->get()
+            ->reject(static function (Worker $worker) use ($supervisors): bool {
+                $supervisor = $supervisors->get((string) $worker->supervisor);
+
+                return $supervisor !== null && $supervisor->startedAt->lte($worker->started_at);
+            })
+            ->groupBy('hostname');
+
+        foreach ($orphans as $hostname => $workers) {
+            $alerts[] = new Alert(
+                "orphans:{$hostname}",
+                $workers->count().' orphan worker'.($workers->count() > 1 ? 's' : '')." on [{$hostname}]: run belvedere:orphans --kill there.",
+                new OrphanWorkers((string) $hostname, $workers->count()),
+            );
+        }
+
+        return $alerts;
     }
 
     private function backlogAlert(string $connection, string $queue, int $size, int $threshold): Alert

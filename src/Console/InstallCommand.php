@@ -10,7 +10,7 @@ final class InstallCommand extends Command
 {
     protected $signature = 'belvedere:install';
 
-    protected $description = 'Publish the Belvedere configuration and migration';
+    protected $description = 'Publish the Belvedere configuration and migrations';
 
     public function handle(): int
     {
@@ -23,6 +23,7 @@ final class InstallCommand extends Command
             'php artisan migrate',
             'Define the viewBelvedere gate (or Belvedere::auth()) to control access outside the local environment.',
             'Schedule `belvedere:prune` daily and `belvedere:check` every minute.',
+            'Keep starting your workers as you do, or describe them under `supervisor` in config/belvedere.php and run `php artisan belvedere` under your process monitor.',
         ]);
 
         return self::SUCCESS;

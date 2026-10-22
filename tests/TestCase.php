@@ -6,16 +6,34 @@ namespace Belvedere\Tests;
 
 use Belvedere\Belvedere;
 use Belvedere\BelvedereServiceProvider;
+use Belvedere\Supervision\AutoScaler;
+use Belvedere\Supervision\MasterSupervisor;
+use Belvedere\Supervision\QueueLoad;
+use Belvedere\Supervision\Repositories\CommandQueue;
+use Belvedere\Supervision\Repositories\MasterRepository;
+use Belvedere\Supervision\Repositories\SupervisorRepository;
+use Belvedere\Supervision\Supervisor;
+use Belvedere\Supervision\SupervisorOptions;
+use Belvedere\Supervision\SystemProcesses;
+use Belvedere\Supervision\WorkerProcess;
+use Belvedere\Tests\Fixtures\Supervision\ExitRecorder;
+use Belvedere\Tests\Fixtures\Supervision\FakeProcess;
+use Belvedere\Tests\Fixtures\Supervision\FakeQueueLoad;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Support\Facades\Artisan;
 use Orchestra\Testbench\TestCase as Orchestra;
+use Symfony\Component\Process\Process;
 
 abstract class TestCase extends Orchestra
 {
+    protected ExitRecorder $exits;
+
     protected function setUp(): void
     {
         parent::setUp();
 
         Belvedere::flushState();
+        $this->exits = new ExitRecorder;
 
         $this->loadMigrationsFrom(__DIR__.'/database/migrations');
         $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
@@ -76,6 +94,61 @@ abstract class TestCase extends Orchestra
     protected function authorize(): void
     {
         Belvedere::auth(static fn (): bool => true);
+    }
+
+    /** @param  array<string, mixed>  $options */
+    protected function supervisorOptions(array $options = []): SupervisorOptions
+    {
+        return SupervisorOptions::fromArray([
+            'name' => 'test-master:supervisor-1',
+            'connection' => 'database',
+            'queue' => 'default',
+            ...$options,
+        ]);
+    }
+
+    /**
+     * A supervisor whose workers are fake processes and whose exit throws.
+     *
+     * @param  array<string, mixed>  $options
+     */
+    protected function supervisor(array $options = [], ?QueueLoad $load = null, int $heartbeatSeconds = 5, bool $workersExitOnTerm = true): Supervisor
+    {
+        $supervisor = new Supervisor(
+            $this->supervisorOptions($options),
+            app(SupervisorRepository::class),
+            app(CommandQueue::class),
+            new AutoScaler($load ?? new FakeQueueLoad),
+            new SystemProcesses(static fn (): array => []),
+            app(ExceptionHandler::class),
+            static fn (SupervisorOptions $options): WorkerProcess => new WorkerProcess(new FakeProcess($options->queue, $workersExitOnTerm)),
+            $heartbeatSeconds,
+        );
+
+        return $supervisor->exitUsing($this->exits->__invoke(...));
+    }
+
+    /** The exit statuses the masters and supervisors built here asked for. */
+    protected function exits(): array
+    {
+        return $this->exits->statuses;
+    }
+
+    /** A master whose supervisors are fake processes and whose exit throws. */
+    protected function master(?string $environment = 'testing', int $heartbeatSeconds = 5, int $memoryLimit = 64): MasterSupervisor
+    {
+        $master = new MasterSupervisor(
+            $environment,
+            app(MasterRepository::class),
+            app(SupervisorRepository::class),
+            app(CommandQueue::class),
+            app(ExceptionHandler::class),
+            static fn (SupervisorOptions $options): Process => new FakeProcess($options->name, true),
+            $heartbeatSeconds,
+            $memoryLimit,
+        );
+
+        return $master->exitUsing($this->exits->__invoke(...));
     }
 
     /** @return array<string, mixed> */

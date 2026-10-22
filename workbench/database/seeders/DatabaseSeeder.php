@@ -10,6 +10,7 @@ use Belvedere\Models\Job;
 use Belvedere\Models\JobTag;
 use Belvedere\Models\MonitoredTag;
 use Belvedere\Models\Worker;
+use Belvedere\Support\Storage;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
@@ -58,11 +59,40 @@ final class DatabaseSeeder extends Seeder
         SendInvoice::dispatch(1099, 'late@example.com')->delay(Carbon::now()->addHours(2));
 
         $this->deadWorker();
+        $this->supervisedWorkers();
 
         Artisan::call('belvedere:check');
     }
 
-    /** A worker killed six minutes ago, with two jobs in flight and one job that left the queue table. */
+    /** A master supervisor started three hours ago, one supervisor balancing two queues, and its three workers. */
+    private function supervisedWorkers(): void
+    {
+        $now = Carbon::now();
+        $storage = app(Storage::class);
+
+        $storage->query('masters')->updateOrInsert(['name' => 'web-03-k3f9'], [
+            'hostname' => 'web-03', 'pid' => 9100, 'environment' => 'production', 'status' => 'running',
+            'supervisors' => json_encode(['web-03-k3f9:supervisor-1']),
+            'started_at' => $now->copy()->subHours(3), 'last_seen_at' => $now,
+        ]);
+
+        $storage->query('supervisors')->updateOrInsert(['name' => 'web-03-k3f9:supervisor-1'], [
+            'master' => 'web-03-k3f9', 'hostname' => 'web-03', 'pid' => 9101, 'status' => 'running',
+            'processes' => json_encode(['database:default' => 2, 'database:media' => 1]),
+            'options' => json_encode(['queue' => 'default,media', 'balance' => 'auto', 'autoScalingStrategy' => 'time', 'minProcesses' => 1, 'maxProcesses' => 4, 'timeout' => 60]),
+            'started_at' => $now->copy()->subHours(3), 'last_seen_at' => $now,
+        ]);
+
+        foreach ([9113 => 'default', 9114 => 'default', 9115 => 'media'] as $pid => $queue) {
+            Worker::query()->updateOrCreate(['id' => "web-03:{$pid}"], [
+                'hostname' => 'web-03', 'pid' => $pid, 'connection' => 'database', 'queues' => $queue, 'supervisor' => 'web-03-k3f9:supervisor-1',
+                'status' => WorkerStatus::Running, 'jobs_processed' => 140 + $pid % 7, 'memory_kb' => 48_000 + $pid,
+                'started_at' => $now->copy()->subHours(2), 'last_seen_at' => $now,
+            ]);
+        }
+    }
+
+    /** A worker killed two hours ago, with two jobs in flight and one job that left the queue table. */
     private function deadWorker(): void
     {
         $now = Carbon::now();
@@ -70,7 +100,7 @@ final class DatabaseSeeder extends Seeder
         Worker::query()->updateOrCreate(['id' => 'web-03:9112'], [
             'hostname' => 'web-03', 'pid' => 9112, 'connection' => 'database', 'queues' => 'default,media',
             'status' => WorkerStatus::Running, 'jobs_processed' => 418, 'memory_kb' => 52_100,
-            'started_at' => $now->copy()->subHours(3), 'last_seen_at' => $now->copy()->subMinutes(6),
+            'started_at' => $now->copy()->subHours(3), 'last_seen_at' => $now->copy()->subHours(2),
         ]);
 
         $executions = [

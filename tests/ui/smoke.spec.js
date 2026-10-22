@@ -51,6 +51,29 @@ test('dashboard shows the workload, the workers and the lost executions', async 
     await expect(page.locator('tr', { hasText: 'web-03:9112' }).locator('.badge', { hasText: 'Dead' })).toBeVisible();
     await expect(page.locator('a', { hasText: '(3 lost)' })).toBeVisible();
     await expect(page.getByText('(1 dead)')).toBeVisible();
+    await expect(page.getByText('3 supervised')).toBeVisible();
+});
+
+test('the supervisor card lists the pools and takes orders', async ({ page }) => {
+    await visit(page, '/dashboard');
+
+    const card = page.locator('.card', { hasText: 'Supervisor web-03-k3f9' });
+
+    await expect(card.locator('.card-header')).toContainText('web-03 · production · 3 processes');
+    await expect(card.locator('.card-header .badge', { hasText: 'Running' })).toBeVisible();
+
+    const row = card.locator('tbody tr', { hasText: 'supervisor-1' });
+
+    await expect(row).toContainText('3 (default 2, media 1)');
+    await expect(row).toContainText('default, media');
+    await expect(row).toContainText('auto (time)');
+    await expect(row).toContainText('1 to 4');
+
+    // Nobody reads the order (the seeded supervisor has no process): the request must still go through.
+    await row.locator('a[title="Pause Supervisor"]').click();
+    await expect(row.locator('a[title="Pause Supervisor"] svg')).not.toHaveClass(/spin/);
+    await card.locator('.card-header a[title="Pause every supervisor"]').click();
+    await expect(card.locator('.card-header a[title="Pause every supervisor"] svg')).not.toHaveClass(/spin/);
 });
 
 test('monitoring lists the tags and their jobs', async ({ page }) => {
@@ -147,11 +170,19 @@ test('failed jobs can be searched and opened', async ({ page }) => {
     await expect(page.getByText('Payment gateway timed out').first()).toBeVisible();
 });
 
-test('workers list every process with its status', async ({ page }) => {
+test('workers list every process with its status and filter by supervisor', async ({ page }) => {
     await visit(page, '/workers');
 
     await expect(page.locator('tr', { hasText: 'web-03:9112' }).locator('.badge', { hasText: 'Dead' })).toBeVisible();
     await expect(page.locator('.badge', { hasText: 'Stopped' }).first()).toBeVisible();
+    await expect(page.locator('tr', { hasText: 'web-03:9113' })).toContainText('Supervisor: supervisor-1');
+
+    await page.locator('select').selectOption('web-03-k3f9:supervisor-1');
+    await expect(rows(page)).toHaveCount(3);
+
+    await page.locator('select').selectOption('none');
+    await expect(rows(page)).toHaveCount(2);
+    await expect(page.locator('tr', { hasText: 'web-03:9112' })).toBeVisible();
 });
 
 test('the colour scheme can be switched', async ({ page }) => {
