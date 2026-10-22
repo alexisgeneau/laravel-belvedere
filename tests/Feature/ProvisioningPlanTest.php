@@ -12,9 +12,12 @@ function plan(array $environments, array $defaults = [], string $master = 'web-1
 }
 
 beforeEach(function (): void {
-    // A queue connection on a server database: the SQLite cap of the test connection must not apply.
+    // The plan only reads the configuration: a queue connection on a server database, which the SQLite
+    // cap must leave alone, and one on a SQLite file, whatever database the suite itself runs on.
     config()->set('database.connections.server', ['driver' => 'pgsql', 'host' => '127.0.0.1', 'database' => 'app']);
     config()->set('queue.connections.server', ['driver' => 'database', 'connection' => 'server', 'table' => 'jobs', 'queue' => 'default', 'retry_after' => 90]);
+    config()->set('database.connections.file', ['driver' => 'sqlite', 'database' => '/var/www/app/database/database.sqlite']);
+    config()->set('queue.connections.file', ['driver' => 'database', 'connection' => 'file', 'table' => 'jobs', 'queue' => 'default', 'retry_after' => 90]);
 });
 
 it('merges the defaults under every environment and names the supervisors after the master', function (): void {
@@ -83,9 +86,9 @@ it('refuses a queue connection that does not use the database driver', function 
 
 it('caps a supervisor on SQLite to one process and says so', function (): void {
     $plan = plan(['production' => [
-        's' => ['connection' => 'database', 'queue' => ['default'], 'minProcesses' => 1, 'maxProcesses' => 4],
+        's' => ['connection' => 'file', 'queue' => ['default'], 'minProcesses' => 1, 'maxProcesses' => 4],
         // One process cannot be balanced between two pools: it takes both queues.
-        'pooled' => ['connection' => 'database', 'queue' => ['default', 'media'], 'minProcesses' => 1, 'maxProcesses' => 4],
+        'pooled' => ['connection' => 'file', 'queue' => ['default', 'media'], 'minProcesses' => 1, 'maxProcesses' => 4],
     ]]);
 
     $supervisors = $plan->forEnvironment('production');
@@ -95,8 +98,8 @@ it('caps a supervisor on SQLite to one process and says so', function (): void {
         ->and($supervisors['pooled']->maxProcesses)->toBe(1)
         ->and($supervisors['pooled']->balance)->toBeFalse()
         ->and($plan->warnings('production'))->toBe([
-            "[s] runs one process instead of 4: connection [database] is SQLite, which Laravel's database queue cannot pop from several processes at once.",
-            "[pooled] runs one process instead of 4, on default,media without balancing: connection [database] is SQLite, which Laravel's database queue cannot pop from several processes at once.",
+            "[s] runs one process instead of 4: connection [file] is SQLite, which Laravel's database queue cannot pop from several processes at once.",
+            "[pooled] runs one process instead of 4, on default,media without balancing: connection [file] is SQLite, which Laravel's database queue cannot pop from several processes at once.",
         ])
         ->and($plan->warnings('local'))->toBe([]);
 });
